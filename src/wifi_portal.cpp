@@ -976,3 +976,22 @@ void handlePortalClient()
     dnsServer.processNextRequest();
   }
 }
+
+void setCaptivePortalEnabled(bool enabled)
+{
+  if (captivePortalEnabled == enabled)
+  {
+    return;
+  }
+
+  captivePortalEnabled = enabled;
+  portalToastMessage = enabled ? "Portal ativado" : "Portal desativado";
+  portalToastUntil = millis() + 2500;
+  applyCaptivePortalDnsState();
+  saveWiFiConfig();
+}
+
+void toggleCaptivePortalEnabled()
+{
+  setCaptivePortalEnabled(!captivePortalEnabled);
+}

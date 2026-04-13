@@ -34,3 +34,5 @@ extern unsigned long angryUntil;
 extern const unsigned long angryHoldMs;
 extern unsigned long evilUntil;
 extern const unsigned long evilHoldMs;
+extern String portalToastMessage;
+extern unsigned long portalToastUntil;

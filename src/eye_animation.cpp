@@ -80,11 +80,19 @@ namespace
     display.drawLine(leftX + 2, y + 3, leftX + 2, y + eyeHeight - 3, BLACK);
     display.drawLine(rightX + eyeWidth - 2, y + 3, rightX + eyeWidth - 2, y + eyeHeight - 3, BLACK);
 
-    // Sobrancelha malvada: grossa, baixa e inclinada para dentro
-    display.drawLine(leftX + 4, y + 1, leftX + eyeWidth - 5, y + 5, BLACK);
-    display.drawLine(leftX + 4, y + 2, leftX + eyeWidth - 5, y + 6, BLACK);
-    display.drawLine(rightX + 4, y + 5, rightX + eyeWidth - 5, y + 1, BLACK);
-    display.drawLine(rightX + 4, y + 6, rightX + eyeWidth - 5, y + 2, BLACK);
+    // Sobrancelha malvada: barra alta e inclinada para dentro, sem cair no canto externo
+    display.fillRect(leftX + 1, y + 1, eyeWidth - 2, 5, BLACK);
+    display.fillRect(rightX + 1, y + 1, eyeWidth - 2, 5, BLACK);
+
+    // Corte diagonal para apertar o olhar no centro, sem baixar demais a borda externa
+    display.drawLine(leftX + 2, y + 2, leftX + eyeWidth - 4, y + 4, BLACK);
+    display.drawLine(leftX + 2, y + 3, leftX + eyeWidth - 4, y + 5, BLACK);
+    display.drawLine(rightX + 2, y + 4, rightX + eyeWidth - 4, y + 2, BLACK);
+    display.drawLine(rightX + 2, y + 5, rightX + eyeWidth - 4, y + 3, BLACK);
+
+    // Pequeno “peso” interno para reforçar a cara de mal
+    display.fillRect(leftX + eyeWidth - 9, y + 3, 5, 3, BLACK);
+    display.fillRect(rightX + 4, y + 3, 5, 3, BLACK);
   }
 
   void drawEvilPupil(int centerX, int centerY)

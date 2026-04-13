@@ -59,21 +59,64 @@ void drawScreen()
 
     if (getLocalTime(&timeinfo))
     {
+      char timeText[6];
+      char secondText[3];
+      snprintf(timeText, sizeof(timeText), "%02d:%02d", timeinfo.tm_hour, timeinfo.tm_min);
+      snprintf(secondText, sizeof(secondText), "%02d", timeinfo.tm_sec);
+
       display.setTextSize(3);
-      display.setCursor(2, 14);
-      display.printf("%02d:%02d",
-                     timeinfo.tm_hour,
-                     timeinfo.tm_min);
+      int16_t timeX = 0;
+      int16_t timeY = 0;
+      uint16_t timeW = 0;
+      uint16_t timeH = 0;
+      display.getTextBounds(timeText, 0, 0, &timeX, &timeY, &timeW, &timeH);
 
       display.setTextSize(1);
-      display.setCursor(98, 24);
-      display.printf("%02d", timeinfo.tm_sec);
+      int16_t secondX = 0;
+      int16_t secondY = 0;
+      uint16_t secondW = 0;
+      uint16_t secondH = 0;
+      display.getTextBounds(secondText, 0, 0, &secondX, &secondY, &secondW, &secondH);
+
+      int totalWidth = timeW + 4 + secondW;
+      int startX = (SCREEN_WIDTH - totalWidth) / 2;
+
+      display.setTextSize(3);
+      display.setCursor(startX - timeX, 14);
+      display.print(timeText);
+
+      display.setTextSize(1);
+      display.setCursor(startX + timeW + 4 - secondX, 24);
+      display.print(secondText);
     }
     else
     {
       display.setTextSize(2);
       display.setCursor(10, 24);
       display.println("Sem hora");
+    }
+  }
+  else if (screen == 4)
+  {
+    display.setTextSize(1);
+
+    const char *handle = "@ofc_edson_costa";
+    int16_t textX = 0;
+    int16_t textY = 0;
+    uint16_t textW = 0;
+    uint16_t textH = 0;
+    display.getTextBounds(handle, 0, 0, &textX, &textY, &textW, &textH);
+
+    int handleX = (SCREEN_WIDTH - textW) / 2;
+    display.setCursor(handleX - textX, 30);
+    display.print(handle);
+
+    if (portalToastUntil > 0 && millis() < portalToastUntil)
+    {
+      display.fillRoundRect(18, 46, 92, 14, 4, BLACK);
+      display.drawRoundRect(18, 46, 92, 14, 4, WHITE);
+      display.setCursor(24, 49);
+      display.print(portalToastMessage);
     }
   }
 

@@ -29,3 +29,5 @@ unsigned long angryUntil = 0;
 const unsigned long angryHoldMs = 5000;
 unsigned long evilUntil = 0;
 const unsigned long evilHoldMs = 4500;
+String portalToastMessage;
+unsigned long portalToastUntil = 0;
