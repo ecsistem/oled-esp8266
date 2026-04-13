@@ -1,0 +1,28 @@
+#pragma once
+
+#include <Arduino.h>
+#include <Adafruit_SSD1306.h>
+#include <ESP8266WebServer.h>
+
+#define SCREEN_WIDTH 128
+#define SCREEN_HEIGHT 64
+
+extern Adafruit_SSD1306 display;
+
+extern String wifiSsid;
+extern String wifiPassword;
+extern const char *wifiConfigPath;
+extern const char *apPassword;
+extern String apSsid;
+extern unsigned long lastConnectAttemptAt;
+
+extern ESP8266WebServer server;
+
+extern float temp;
+
+extern int screen;
+extern unsigned long lastScreenChange;
+extern unsigned long lastWeatherUpdate;
+
+extern unsigned long angryUntil;
+extern const unsigned long angryHoldMs;

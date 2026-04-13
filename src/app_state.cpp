@@ -1,0 +1,23 @@
+#include "app_state.h"
+
+#include <Wire.h>
+
+Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
+
+String wifiSsid = "OLIVEIRA";
+String wifiPassword = "residencial242";
+const char *wifiConfigPath = "/wifi.json";
+const char *apPassword = "12345678";
+String apSsid;
+unsigned long lastConnectAttemptAt = 0;
+
+ESP8266WebServer server(80);
+
+float temp = 0;
+
+int screen = 0;
+unsigned long lastScreenChange = 0;
+unsigned long lastWeatherUpdate = 0;
+
+unsigned long angryUntil = 0;
+const unsigned long angryHoldMs = 5000;
