@@ -6,7 +6,6 @@
 #include "ui_screens.h"
 #include "weather.h"
 #include "wifi_portal.h"
-#include "wifi_scan.h"
 #include "deauther.h"
 
 namespace
@@ -29,16 +28,14 @@ namespace
       return screen4Enabled;
     if (idx == 5)
       return screen5Enabled;
-    if (idx == 6)
-      return screen6Enabled;
     return false;
   }
 
   int nextEnabledScreen(int current)
   {
-    for (int step = 1; step <= 7; step++)
+    for (int step = 1; step <= 6; step++)
     {
-      int candidate = (current + step) % 7;
+      int candidate = (current + step) % 6;
       if (isScreenEnabled(candidate))
       {
         return candidate;
@@ -76,7 +73,7 @@ namespace
 
       if (!toggledThisPress && now - pressedAt >= flashHoldMs)
       {
-        if (screen == 6)
+        if (screen == 5)
         {
           toggleDeauther();
           toggledThisPress = true;
@@ -123,7 +120,7 @@ void loop()
 {
   handlePortalClient();
   handleFlashButton();
-  wifiScanTick();
+  updateDeauth();
 
   if (!isScreenEnabled(screen))
   {

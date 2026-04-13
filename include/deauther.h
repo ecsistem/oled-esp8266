@@ -8,3 +8,7 @@ void stopDeauthAttack();
 bool isDeauthActive();
 void updateDeauth();
 void toggleDeauther();
+
+extern String deautherApMac;
+extern String deautherClientMac;
+extern int deautherChannel;
