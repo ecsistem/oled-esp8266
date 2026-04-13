@@ -891,7 +891,7 @@ namespace
     screenChangeIntervalMs = screenSec * 1000;
     timezoneOffsetHours = newTz;
     oledBrightness = static_cast<uint8_t>(newBrightness);
-    captivePortalEnabled = newCaptivePortalEnabled;
+    setCaptivePortalEnabled(newCaptivePortalEnabled);
 
     applyDisplayAndTimeSettings();
     bool saved = saveWiFiConfig();
@@ -985,6 +985,8 @@ void setCaptivePortalEnabled(bool enabled)
   }
 
   captivePortalEnabled = enabled;
+  screen = 0;
+  lastScreenChange = millis();
   portalToastMessage = enabled ? "Portal ativado" : "Portal desativado";
   portalToastUntil = millis() + 2500;
   applyCaptivePortalDnsState();
