@@ -24,6 +24,10 @@ unsigned long screenChangeIntervalMs = 8000;
 int timezoneOffsetHours = -3;
 uint8_t oledBrightness = 180;
 bool captivePortalEnabled = false;
+bool screen1Enabled = true;
+bool screen2Enabled = true;
+bool screen3Enabled = true;
+bool screen4Enabled = true;
 
 unsigned long angryUntil = 0;
 const unsigned long angryHoldMs = 5000;

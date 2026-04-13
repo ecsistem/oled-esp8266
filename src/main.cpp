@@ -13,6 +13,35 @@ namespace
   constexpr unsigned long flashHoldMs = 1200;
   constexpr unsigned long eyeScreenMultiplier = 2;
 
+  bool isScreenEnabled(int idx)
+  {
+    if (idx == 0)
+      return true;
+    if (idx == 1)
+      return screen1Enabled;
+    if (idx == 2)
+      return screen2Enabled;
+    if (idx == 3)
+      return screen3Enabled;
+    if (idx == 4)
+      return screen4Enabled;
+    return false;
+  }
+
+  int nextEnabledScreen(int current)
+  {
+    for (int step = 1; step <= 5; step++)
+    {
+      int candidate = (current + step) % 5;
+      if (isScreenEnabled(candidate))
+      {
+        return candidate;
+      }
+    }
+
+    return 0;
+  }
+
   unsigned long currentScreenIntervalMs()
   {
     if (screen == 0)
@@ -80,6 +109,12 @@ void loop()
   handlePortalClient();
   handleFlashButton();
 
+  if (!isScreenEnabled(screen))
+  {
+    screen = 0;
+    lastScreenChange = millis();
+  }
+
   if (millis() - lastWeatherUpdate > weatherUpdateIntervalMs)
   {
     getWeather();
@@ -88,11 +123,7 @@ void loop()
 
   if (millis() - lastScreenChange > currentScreenIntervalMs())
   {
-    screen++;
-    if (screen > 4)
-    {
-      screen = 0;
-    }
+    screen = nextEnabledScreen(screen);
 
     lastScreenChange = millis();
   }

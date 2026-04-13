@@ -29,6 +29,10 @@ extern unsigned long screenChangeIntervalMs;
 extern int timezoneOffsetHours;
 extern uint8_t oledBrightness;
 extern bool captivePortalEnabled;
+extern bool screen1Enabled;
+extern bool screen2Enabled;
+extern bool screen3Enabled;
+extern bool screen4Enabled;
 
 extern unsigned long angryUntil;
 extern const unsigned long angryHoldMs;

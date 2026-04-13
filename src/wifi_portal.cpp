@@ -79,6 +79,10 @@ namespace
     timezoneOffsetHours = doc["timezone_offset_hours"] | timezoneOffsetHours;
     oledBrightness = doc["oled_brightness"] | oledBrightness;
     captivePortalEnabled = doc["captive_portal_enabled"] | captivePortalEnabled;
+    screen1Enabled = doc["screen1_enabled"] | screen1Enabled;
+    screen2Enabled = doc["screen2_enabled"] | screen2Enabled;
+    screen3Enabled = doc["screen3_enabled"] | screen3Enabled;
+    screen4Enabled = doc["screen4_enabled"] | screen4Enabled;
   }
 
   bool saveWiFiConfig()
@@ -94,6 +98,10 @@ namespace
     doc["timezone_offset_hours"] = timezoneOffsetHours;
     doc["oled_brightness"] = oledBrightness;
     doc["captive_portal_enabled"] = captivePortalEnabled;
+    doc["screen1_enabled"] = screen1Enabled;
+    doc["screen2_enabled"] = screen2Enabled;
+    doc["screen3_enabled"] = screen3Enabled;
+    doc["screen4_enabled"] = screen4Enabled;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -787,6 +795,20 @@ namespace
     page += "<input name='brightness' type='number' min='0' max='255' value='" + String(oledBrightness) + "'>";
     page += "<label>Troca de tela (segundos)</label>";
     page += "<input name='screen_sec' type='number' min='2' max='120' value='" + String(screenChangeIntervalMs / 1000) + "'>";
+    page += "<h3>Paginas ativas</h3>";
+    page += "<label><input name='screen1_enabled' type='checkbox'";
+    page += screen1Enabled ? " checked" : "";
+    page += "> Wi-Fi / Status</label>";
+    page += "<label><input name='screen2_enabled' type='checkbox'";
+    page += screen2Enabled ? " checked" : "";
+    page += "> Temperatura</label>";
+    page += "<label><input name='screen3_enabled' type='checkbox'";
+    page += screen3Enabled ? " checked" : "";
+    page += "> Hora</label>";
+    page += "<label><input name='screen4_enabled' type='checkbox'";
+    page += screen4Enabled ? " checked" : "";
+    page += "> Instagram</label>";
+    page += "<p class='muted'>A tela do olho sempre fica ativa.</p>";
     page += "<label><input name='captive_portal' type='checkbox'";
     page += captivePortalEnabled ? " checked" : "";
     page += "> Ativar captive portal</label>";
@@ -846,6 +868,10 @@ namespace
     doc["timezone_offset_hours"] = timezoneOffsetHours;
     doc["oled_brightness"] = oledBrightness;
     doc["captive_portal_enabled"] = captivePortalEnabled;
+    doc["screen1_enabled"] = screen1Enabled;
+    doc["screen2_enabled"] = screen2Enabled;
+    doc["screen3_enabled"] = screen3Enabled;
+    doc["screen4_enabled"] = screen4Enabled;
 
     String payload;
     serializeJson(doc, payload);
@@ -860,10 +886,20 @@ namespace
     String newApPassword = server.arg("ap_password");
     bool newApOpen = server.hasArg("ap_open");
     bool newCaptivePortalEnabled = server.hasArg("captive_portal");
+    bool newScreen1Enabled = server.hasArg("screen1_enabled");
+    bool newScreen2Enabled = server.hasArg("screen2_enabled");
+    bool newScreen3Enabled = server.hasArg("screen3_enabled");
+    bool newScreen4Enabled = server.hasArg("screen4_enabled");
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
     int newBrightness = parseIntBounded(server.arg("brightness"), 0, 255, oledBrightness);
+
+    if (!newScreen1Enabled && !newScreen2Enabled && !newScreen3Enabled && !newScreen4Enabled)
+    {
+      server.send(400, "text/plain; charset=utf-8", "Ative pelo menos uma pagina adicional");
+      return;
+    }
 
     if (newSsid.length() == 0)
     {
@@ -891,6 +927,10 @@ namespace
     screenChangeIntervalMs = screenSec * 1000;
     timezoneOffsetHours = newTz;
     oledBrightness = static_cast<uint8_t>(newBrightness);
+    screen1Enabled = newScreen1Enabled;
+    screen2Enabled = newScreen2Enabled;
+    screen3Enabled = newScreen3Enabled;
+    screen4Enabled = newScreen4Enabled;
     setCaptivePortalEnabled(newCaptivePortalEnabled);
 
     applyDisplayAndTimeSettings();
