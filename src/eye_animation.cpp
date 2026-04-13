@@ -63,16 +63,27 @@ namespace
     drawDeadEyeSingle(rightX, y, false, phase + 1);
   }
 
-  void drawEvilLids(int leftX, int rightX, int y)
+  void drawEvilEyesShape(int leftX, int rightX, int y)
   {
-    for (int i = 0; i < 7; i++)
-    {
-      display.drawLine(leftX + 3, y + 1 + i, leftX + eyeWidth - 3, y + 7 + (i / 2), BLACK);
-      display.drawLine(rightX + 3, y + 7 + (i / 2), rightX + eyeWidth - 3, y + 1 + i, BLACK);
-    }
+    int leftTopX = leftX + 2;
+    int leftTopY = y + 2;
+    int leftBottomX = leftX + 2;
+    int leftBottomY = y + eyeHeight - 2;
+    int leftApexX = leftX + eyeWidth - 2;
+    int leftApexY = y + eyeHeight / 2;
 
-    display.drawLine(leftX + 4, y + eyeHeight - 6, leftX + eyeWidth - 4, y + eyeHeight - 3, BLACK);
-    display.drawLine(rightX + 4, y + eyeHeight - 3, rightX + eyeWidth - 4, y + eyeHeight - 6, BLACK);
+    int rightTopX = rightX + eyeWidth - 2;
+    int rightTopY = y + 2;
+    int rightBottomX = rightX + eyeWidth - 2;
+    int rightBottomY = y + eyeHeight - 2;
+    int rightApexX = rightX + 2;
+    int rightApexY = y + eyeHeight / 2;
+
+    display.fillTriangle(leftTopX, leftTopY, leftBottomX, leftBottomY, leftApexX, leftApexY, WHITE);
+    display.fillTriangle(rightTopX, rightTopY, rightBottomX, rightBottomY, rightApexX, rightApexY, WHITE);
+
+    display.drawTriangle(leftTopX, leftTopY, leftBottomX, leftBottomY, leftApexX, leftApexY, BLACK);
+    display.drawTriangle(rightTopX, rightTopY, rightBottomX, rightBottomY, rightApexX, rightApexY, BLACK);
   }
 } // namespace
 
@@ -170,8 +181,15 @@ void drawEyeAnimation()
   int leftX = startX;
   int rightX = startX + eyeWidth + eyeGap;
 
-  display.fillRoundRect(leftX, y, eyeWidth, eyeHeight, eyeRadius, WHITE);
-  display.fillRoundRect(rightX, y, eyeWidth, eyeHeight, eyeRadius, WHITE);
+  if (evilEyes)
+  {
+    drawEvilEyesShape(leftX, rightX, y);
+  }
+  else
+  {
+    display.fillRoundRect(leftX, y, eyeWidth, eyeHeight, eyeRadius, WHITE);
+    display.fillRoundRect(rightX, y, eyeWidth, eyeHeight, eyeRadius, WHITE);
+  }
 
   int pupilMinX = -(eyeWidth / 2 - pupilRadius - 4);
   int pupilMaxX = (eyeWidth / 2 - pupilRadius - 4);
@@ -189,8 +207,8 @@ void drawEyeAnimation()
 
   if (evilEyes)
   {
-    leftPx = constrain(px + 3, pupilMinX, pupilMaxX);
-    rightPx = constrain(px - 3, pupilMinX, pupilMaxX);
+    leftPx = constrain(px + 7, pupilMinX, pupilMaxX);
+    rightPx = constrain(px - 7, pupilMinX, pupilMaxX);
   }
 
   if (deadEyes)
@@ -201,9 +219,15 @@ void drawEyeAnimation()
 
   if (evilEyes)
   {
-    display.fillRect(leftCenterX + leftPx - 1, centerY + py - 5, 2, 10, BLACK);
-    display.fillRect(rightCenterX + rightPx - 1, centerY + py - 5, 2, 10, BLACK);
-    drawEvilLids(leftX, rightX, y);
+    int leftPupilX = leftCenterX + leftPx;
+    int rightPupilX = rightCenterX + rightPx;
+    int topY = centerY + py - 5;
+    int bottomY = centerY + py + 5;
+
+    display.drawLine(leftPupilX, topY, leftPupilX, bottomY, BLACK);
+    display.drawLine(leftPupilX + 1, topY, leftPupilX + 1, bottomY, BLACK);
+    display.drawLine(rightPupilX, topY, rightPupilX, bottomY, BLACK);
+    display.drawLine(rightPupilX + 1, topY, rightPupilX + 1, bottomY, BLACK);
   }
   else
   {
@@ -218,7 +242,7 @@ void drawEyeAnimation()
     display.fillRect(rightX + 4, y + 2, eyeWidth - 8, 3, BLACK);
   }
 
-  if (eyelid > 0)
+  if (eyelid > 0 && !evilEyes)
   {
     int topCover = eyelid / 2;
     int bottomCover = eyelid - topCover;

@@ -66,7 +66,7 @@ void drawScreen()
                      timeinfo.tm_min);
 
       display.setTextSize(1);
-      display.setCursor(112, 34);
+      display.setCursor(66, 23);
       display.printf("%02d", timeinfo.tm_sec);
     }
     else
