@@ -65,30 +65,37 @@ namespace
 
   void drawEvilEyesShape(int leftX, int rightX, int y)
   {
-    int leftTopX = leftX + 4;
-    int leftTopY = y + 1;
-    int leftBottomX = leftX + 4;
-    int leftBottomY = y + eyeHeight - 1;
-    int leftApexX = leftX + eyeWidth - 1;
-    int leftApexY = y + eyeHeight / 2;
+    // Formato cilíndrico/arredondado tipo na imagem
+    int radius = 6;
 
-    int rightTopX = rightX + eyeWidth - 4;
-    int rightTopY = y + 1;
-    int rightBottomX = rightX + eyeWidth - 4;
-    int rightBottomY = y + eyeHeight - 1;
-    int rightApexX = rightX + 1;
-    int rightApexY = y + eyeHeight / 2;
+    // Olho esquerdo - retângulo arredondado levemente inclinado
+    display.fillRoundRect(leftX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, WHITE);
+    display.drawRoundRect(leftX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, BLACK);
 
-    display.fillTriangle(leftTopX, leftTopY, leftBottomX, leftBottomY, leftApexX, leftApexY, WHITE);
-    display.fillTriangle(rightTopX, rightTopY, rightBottomX, rightBottomY, rightApexX, rightApexY, WHITE);
+    // Olho direito - retângulo arredondado levemente inclinado
+    display.fillRoundRect(rightX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, WHITE);
+    display.drawRoundRect(rightX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, BLACK);
 
-    display.drawTriangle(leftTopX, leftTopY, leftBottomX, leftBottomY, leftApexX, leftApexY, BLACK);
-    display.drawTriangle(rightTopX, rightTopY, rightBottomX, rightBottomY, rightApexX, rightApexY, BLACK);
+    // Detalhes de profundidade - linhas finas nos lados
+    display.drawLine(leftX + 2, y + 3, leftX + 2, y + eyeHeight - 3, BLACK);
+    display.drawLine(rightX + eyeWidth - 2, y + 3, rightX + eyeWidth - 2, y + eyeHeight - 3, BLACK);
 
-    display.drawLine(leftTopX, leftTopY - 1, leftApexX + 2, leftApexY - 3, BLACK);
-    display.drawLine(leftBottomX, leftBottomY + 1, leftApexX + 2, leftApexY + 3, BLACK);
-    display.drawLine(rightTopX, rightTopY - 1, rightApexX - 2, rightApexY - 3, BLACK);
-    display.drawLine(rightBottomX, rightBottomY + 1, rightApexX - 2, rightApexY + 3, BLACK);
+    // Sobrancelha malvada: grossa, baixa e inclinada para dentro
+    display.drawLine(leftX + 4, y + 1, leftX + eyeWidth - 5, y + 5, BLACK);
+    display.drawLine(leftX + 4, y + 2, leftX + eyeWidth - 5, y + 6, BLACK);
+    display.drawLine(rightX + 4, y + 5, rightX + eyeWidth - 5, y + 1, BLACK);
+    display.drawLine(rightX + 4, y + 6, rightX + eyeWidth - 5, y + 2, BLACK);
+  }
+
+  void drawEvilPupil(int centerX, int centerY)
+  {
+    // Pupila tipo fenda vertical malvada e afiada
+    display.fillRect(centerX - 1, centerY - 6, 2, 12, BLACK);
+
+    // Pico superior tipo chama
+    display.drawPixel(centerX, centerY - 7, BLACK);
+    display.drawPixel(centerX - 1, centerY - 7, BLACK);
+    display.drawPixel(centerX + 1, centerY - 7, BLACK);
   }
 } // namespace
 
@@ -226,21 +233,9 @@ void drawEyeAnimation()
   {
     int leftPupilX = leftCenterX + leftPx;
     int rightPupilX = rightCenterX + rightPx;
-    int topY = centerY + py - 6;
-    int bottomY = centerY + py + 6;
 
-    display.fillRect(leftPupilX - 1, topY, 2, 12, BLACK);
-    display.fillRect(rightPupilX - 1, topY, 2, 12, BLACK);
-
-    display.drawPixel(leftPupilX - 2, topY - 1, BLACK);
-    display.drawPixel(leftPupilX + 2, topY - 1, BLACK);
-    display.drawPixel(leftPupilX - 2, bottomY + 1, BLACK);
-    display.drawPixel(leftPupilX + 2, bottomY + 1, BLACK);
-
-    display.drawPixel(rightPupilX - 2, topY - 1, BLACK);
-    display.drawPixel(rightPupilX + 2, topY - 1, BLACK);
-    display.drawPixel(rightPupilX - 2, bottomY + 1, BLACK);
-    display.drawPixel(rightPupilX + 2, bottomY + 1, BLACK);
+    drawEvilPupil(leftPupilX, centerY + py);
+    drawEvilPupil(rightPupilX, centerY + py);
   }
   else
   {
