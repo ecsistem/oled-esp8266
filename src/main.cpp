@@ -307,7 +307,7 @@ void loop()
   }
 
   // troca tela
-  if (millis() - lastScreenChange > 4000)
+  if (millis() - lastScreenChange > 8000)
   {
     screen++;
     if (screen > 3)
