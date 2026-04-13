@@ -35,10 +35,15 @@ int pupilOffsetX = 0;
 int pupilOffsetY = 0;
 int eyelid = 0;
 bool closingBlink = false;
+bool angryEyes = false;
+bool deadEyes = false;
 
 unsigned long lastEyeFrame = 0;
 unsigned long nextBlinkAt = 0;
 unsigned long nextLookAt = 0;
+unsigned long angryUntil = 0;
+
+const unsigned long angryHoldMs = 5000;
 
 void updateEyeAnimation()
 {
@@ -118,8 +123,34 @@ void updateEyeAnimation()
   }
 }
 
+void drawAngryBrows(int leftX, int rightX, int y)
+{
+  display.drawLine(leftX + 6, y + 6, leftX + eyeWidth - 6, y + 1, BLACK);
+  display.drawLine(leftX + 6, y + 7, leftX + eyeWidth - 6, y + 2, BLACK);
+
+  display.drawLine(rightX + 6, y + 1, rightX + eyeWidth - 6, y + 6, BLACK);
+  display.drawLine(rightX + 6, y + 2, rightX + eyeWidth - 6, y + 7, BLACK);
+}
+
+void drawDeadEyes(int leftX, int rightX, int y)
+{
+  int eyeCenterY = y + eyeHeight / 2;
+
+  display.drawLine(leftX + 8, y + 6, leftX + eyeWidth - 8, y + eyeHeight - 6, BLACK);
+  display.drawLine(leftX + 8, y + eyeHeight - 6, leftX + eyeWidth - 8, y + 6, BLACK);
+
+  display.drawLine(rightX + 8, y + 6, rightX + eyeWidth - 8, y + eyeHeight - 6, BLACK);
+  display.drawLine(rightX + 8, y + eyeHeight - 6, rightX + eyeWidth - 8, y + 6, BLACK);
+
+  display.drawLine(leftX + 12, eyeCenterY + 9, leftX + eyeWidth - 12, eyeCenterY + 9, BLACK);
+  display.drawLine(rightX + 12, eyeCenterY + 9, rightX + eyeWidth - 12, eyeCenterY + 9, BLACK);
+}
+
 void drawEyeAnimation()
 {
+  deadEyes = WiFi.status() != WL_CONNECTED;
+  angryEyes = !deadEyes && millis() < angryUntil;
+
   int totalEyesWidth = (eyeWidth * 2) + eyeGap;
   int startX = (SCREEN_WIDTH - totalEyesWidth) / 2;
   int y = 18;
@@ -142,8 +173,21 @@ void drawEyeAnimation()
   int rightCenterX = rightX + eyeWidth / 2;
   int centerY = y + eyeHeight / 2;
 
+  if (deadEyes)
+  {
+    drawDeadEyes(leftX, rightX, y);
+    return;
+  }
+
   display.fillCircle(leftCenterX + px, centerY + py, pupilRadius, BLACK);
   display.fillCircle(rightCenterX + px, centerY + py, pupilRadius, BLACK);
+
+  if (angryEyes)
+  {
+    drawAngryBrows(leftX, rightX, y);
+    display.fillRect(leftX + 4, y + 2, eyeWidth - 8, 3, BLACK);
+    display.fillRect(rightX + 4, y + 2, eyeWidth - 8, 3, BLACK);
+  }
 
   if (eyelid > 0)
   {
@@ -163,11 +207,18 @@ void getWeather()
 {
   WiFiClient client;
   HTTPClient http;
+  unsigned long startedAt = millis();
 
   String url = "http://api.open-meteo.com/v1/forecast?latitude=-1.29&longitude=-47.93&current_weather=true";
 
   http.begin(client, url);
   int code = http.GET();
+  unsigned long latency = millis() - startedAt;
+
+  if (latency >= 1800)
+  {
+    angryUntil = millis() + angryHoldMs;
+  }
 
   if (code > 0)
   {
