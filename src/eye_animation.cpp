@@ -18,6 +18,7 @@ namespace
   int eyelid = 0;
   bool closingBlink = false;
   bool angryEyes = false;
+  bool evilEyes = false;
   bool deadEyes = false;
 
   unsigned long lastEyeFrame = 0;
@@ -60,6 +61,18 @@ namespace
     int phase = (millis() / 180) % 4;
     drawDeadEyeSingle(leftX, y, true, phase);
     drawDeadEyeSingle(rightX, y, false, phase + 1);
+  }
+
+  void drawEvilLids(int leftX, int rightX, int y)
+  {
+    for (int i = 0; i < 7; i++)
+    {
+      display.drawLine(leftX + 3, y + 1 + i, leftX + eyeWidth - 3, y + 7 + (i / 2), BLACK);
+      display.drawLine(rightX + 3, y + 7 + (i / 2), rightX + eyeWidth - 3, y + 1 + i, BLACK);
+    }
+
+    display.drawLine(leftX + 4, y + eyeHeight - 6, leftX + eyeWidth - 4, y + eyeHeight - 3, BLACK);
+    display.drawLine(rightX + 4, y + eyeHeight - 3, rightX + eyeWidth - 4, y + eyeHeight - 6, BLACK);
   }
 } // namespace
 
@@ -143,8 +156,12 @@ void updateEyeAnimation()
 
 void drawEyeAnimation()
 {
-  deadEyes = WiFi.status() != WL_CONNECTED;
-  angryEyes = !deadEyes && millis() < angryUntil;
+  bool hasApMode = WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA;
+  bool captivePortalActive = captivePortalEnabled && hasApMode;
+
+  deadEyes = !captivePortalActive && WiFi.status() != WL_CONNECTED;
+  evilEyes = !deadEyes && (captivePortalActive || millis() < evilUntil);
+  angryEyes = !deadEyes && !evilEyes && millis() < angryUntil;
 
   int totalEyesWidth = (eyeWidth * 2) + eyeGap;
   int startX = (SCREEN_WIDTH - totalEyesWidth) / 2;
@@ -167,6 +184,14 @@ void drawEyeAnimation()
   int leftCenterX = leftX + eyeWidth / 2;
   int rightCenterX = rightX + eyeWidth / 2;
   int centerY = y + eyeHeight / 2;
+  int leftPx = px;
+  int rightPx = px;
+
+  if (evilEyes)
+  {
+    leftPx = constrain(px + 3, pupilMinX, pupilMaxX);
+    rightPx = constrain(px - 3, pupilMinX, pupilMaxX);
+  }
 
   if (deadEyes)
   {
@@ -174,8 +199,17 @@ void drawEyeAnimation()
     return;
   }
 
-  display.fillCircle(leftCenterX + px, centerY + py, pupilRadius, BLACK);
-  display.fillCircle(rightCenterX + px, centerY + py, pupilRadius, BLACK);
+  if (evilEyes)
+  {
+    display.fillRect(leftCenterX + leftPx - 1, centerY + py - 5, 2, 10, BLACK);
+    display.fillRect(rightCenterX + rightPx - 1, centerY + py - 5, 2, 10, BLACK);
+    drawEvilLids(leftX, rightX, y);
+  }
+  else
+  {
+    display.fillCircle(leftCenterX + leftPx, centerY + py, pupilRadius, BLACK);
+    display.fillCircle(rightCenterX + rightPx, centerY + py, pupilRadius, BLACK);
+  }
 
   if (angryEyes)
   {

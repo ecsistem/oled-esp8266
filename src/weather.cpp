@@ -18,7 +18,11 @@ void getWeather()
   int code = http.GET();
   unsigned long latency = millis() - startedAt;
 
-  if (latency >= 1800)
+  if (code <= 0 || latency >= 2800)
+  {
+    evilUntil = millis() + evilHoldMs;
+  }
+  else if (latency >= 1800)
   {
     angryUntil = millis() + angryHoldMs;
   }
