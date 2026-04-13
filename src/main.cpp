@@ -87,7 +87,7 @@ void setup()
 {
   Serial.begin(115200);
 
-  Wire.begin(14, 12);
+  Wire.begin(0, 2); // SDA=D3 (GPIO0), SCL=D4 (GPIO2)
   pinMode(flashButtonPin, INPUT_PULLUP);
 
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C))
