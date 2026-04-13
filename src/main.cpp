@@ -10,6 +10,7 @@
 namespace
 {
   constexpr uint8_t flashButtonPin = 0;
+  constexpr uint8_t boardLedPin = LED_BUILTIN;
   constexpr unsigned long flashHoldMs = 1200;
   constexpr unsigned long eyeScreenMultiplier = 2;
 
@@ -86,6 +87,9 @@ namespace
 void setup()
 {
   Serial.begin(115200);
+
+  pinMode(boardLedPin, OUTPUT);
+  digitalWrite(boardLedPin, HIGH); // ESP8266 onboard LED is active-low.
 
   Wire.begin(0, 2); // SDA=D3 (GPIO0), SCL=D4 (GPIO2)
   pinMode(flashButtonPin, INPUT_PULLUP);
