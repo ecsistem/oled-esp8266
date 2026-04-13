@@ -8,6 +8,7 @@
 #define SCREEN_HEIGHT 64
 
 extern Adafruit_SSD1306 display;
+extern ESP8266WebServer server;
 
 extern String wifiSsid;
 extern String wifiPassword;
@@ -33,6 +34,8 @@ extern bool screen1Enabled;
 extern bool screen2Enabled;
 extern bool screen3Enabled;
 extern bool screen4Enabled;
+extern bool screen5Enabled;
+extern bool screen6Enabled;
 
 extern unsigned long angryUntil;
 extern const unsigned long angryHoldMs;

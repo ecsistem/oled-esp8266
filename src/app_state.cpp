@@ -28,6 +28,8 @@ bool screen1Enabled = true;
 bool screen2Enabled = true;
 bool screen3Enabled = true;
 bool screen4Enabled = true;
+bool screen5Enabled = true;
+bool screen6Enabled = true;
 
 unsigned long angryUntil = 0;
 const unsigned long angryHoldMs = 5000;

@@ -5,6 +5,8 @@
 
 #include "app_state.h"
 #include "eye_animation.h"
+#include "wifi_scan.h"
+#include "deauther.h"
 
 void drawScreen()
 {
@@ -117,6 +119,47 @@ void drawScreen()
       display.drawRoundRect(18, 46, 92, 14, 4, WHITE);
       display.setCursor(24, 49);
       display.print(portalToastMessage);
+    }
+  }
+  else if (screen == 5)
+  {
+    display.setTextSize(1);
+    display.setCursor(0, 0);
+    display.println(F("Redes Wi-Fi"));
+
+    if (g_wifiScanBusy && g_wifiScanNetworkCount == 0)
+    {
+      display.setCursor(0, 24);
+      display.println(F("Escaneando..."));
+    }
+    else if (g_wifiScanNetworkCount == 0)
+    {
+      display.setCursor(0, 24);
+      display.println(F("Nenhuma rede"));
+    }
+    else
+    {
+      constexpr int kMaxLines = 7;
+      char line[22];
+
+      for (int i = 0; i < g_wifiScanNetworkCount && i < kMaxLines; i++)
+      {
+        const char *name = g_wifiScanNetworks[i].ssid[0] ? g_wifiScanNetworks[i].ssid : "(oculto)";
+        int prefix = snprintf(line, sizeof(line), "%2u %3d ", g_wifiScanNetworks[i].channel, static_cast<int>(g_wifiScanNetworks[i].rssi));
+        if (prefix < 0)
+        {
+          prefix = 0;
+        }
+        if (static_cast<size_t>(prefix) >= sizeof(line))
+        {
+          prefix = static_cast<int>(sizeof(line)) - 1;
+        }
+        strncpy(line + prefix, name, sizeof(line) - 1 - static_cast<size_t>(prefix));
+        line[sizeof(line) - 1] = '\0';
+
+        display.setCursor(0, static_cast<int16_t>(8 + i * 8));
+        display.print(line);
+      }
     }
   }
 

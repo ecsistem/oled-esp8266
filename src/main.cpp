@@ -6,6 +6,8 @@
 #include "ui_screens.h"
 #include "weather.h"
 #include "wifi_portal.h"
+#include "wifi_scan.h"
+#include "deauther.h"
 
 namespace
 {
@@ -25,14 +27,18 @@ namespace
       return screen3Enabled;
     if (idx == 4)
       return screen4Enabled;
+    if (idx == 5)
+      return screen5Enabled;
+    if (idx == 6)
+      return screen6Enabled;
     return false;
   }
 
   int nextEnabledScreen(int current)
   {
-    for (int step = 1; step <= 5; step++)
+    for (int step = 1; step <= 7; step++)
     {
-      int candidate = (current + step) % 5;
+      int candidate = (current + step) % 7;
       if (isScreenEnabled(candidate))
       {
         return candidate;
@@ -70,9 +76,18 @@ namespace
 
       if (!toggledThisPress && now - pressedAt >= flashHoldMs)
       {
-        toggleCaptivePortalEnabled();
-        toggledThisPress = true;
-        Serial.println(captivePortalEnabled ? "Captive portal ativado pelo botao FLASH" : "Captive portal desativado pelo botao FLASH");
+        if (screen == 6)
+        {
+          toggleDeauther();
+          toggledThisPress = true;
+          Serial.println(isDeauthActive() ? "Deauther started" : "Deauther stopped");
+        }
+        else
+        {
+          toggleCaptivePortalEnabled();
+          toggledThisPress = true;
+          Serial.println(captivePortalEnabled ? "Captive portal ativado pelo botao FLASH" : "Captive portal desativado pelo botao FLASH");
+        }
       }
     }
     else
@@ -108,6 +123,7 @@ void loop()
 {
   handlePortalClient();
   handleFlashButton();
+  wifiScanTick();
 
   if (!isScreenEnabled(screen))
   {
