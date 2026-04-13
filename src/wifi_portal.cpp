@@ -584,7 +584,8 @@ namespace
 
     JsonDocument doc;
     doc["success"] = true;
-    doc["message"] = "Deauther started";
+    doc["message"] = "Deauther iniciado";
+    doc["note"] = "O Wi-Fi do ESP8266 (AP) desliga durante o ataque. Para parar: botao FLASH no ecra Deauther ou Serial.";
     String payload;
     serializeJson(doc, payload);
     server.send(200, "application/json; charset=utf-8", payload);
@@ -1182,10 +1183,12 @@ namespace
     page += "<div class='card'>";
     page += "<h3>Deauther Wi-Fi</h3>";
     page += "<p class='muted'>Busque redes Wi-Fi proximas e selecione um alvo para ataque de deautenticação.</p>";
+    page += "<p class='muted'><strong>Importante:</strong> ao iniciar, o ponto de acesso deste dispositivo desliga (comportamento necessario). Perde a ligacao ao /admin ate parar — use o <strong>botao FLASH</strong> no ecra Deauther (5) ou monitor serie para parar.</p>";
     page += "<p><strong>Status:</strong> " + String(deautherRunning ? "<span class='ok'>ATIVO</span>" : "<span class='bad'>PARADO</span>") + "</p>";
     if (deautherRunning)
     {
-      page += "<p><strong>Pacotes enviados:</strong> " + String(deautherPacketsSent) + "</p>";
+      page += "<p><strong>Injecao OK (driver):</strong> " + String(deautherPacketsSent) + "</p>";
+      page += "<p><strong>Recusadas pelo driver:</strong> " + String(deautherInjectFail) + " <span class='muted'>(fila cheia = aumente pausa no codigo)</span></p>";
     }
     page += "<button onclick='loadNetworks()'>Buscar Redes Wi-Fi</button>";
     page += "<div id='networksList' style='margin-top:12px;'></div>";
@@ -1275,6 +1278,7 @@ namespace
     doc["deauther_channel"] = deautherChannel;
     doc["deauther_running"] = deautherRunning;
     doc["deauther_packets_sent"] = deautherPacketsSent;
+    doc["deauther_inject_fail"] = deautherInjectFail;
     doc["beacon_active"] = beaconActive;
     doc["beacon_packets_sent"] = beaconPacketsSent;
 
@@ -1407,8 +1411,14 @@ namespace
   {
     WiFi.persistent(false);
     WiFi.mode(WIFI_AP_STA);
-    delay(100);
+    delay(200);
     startHotspot();
+    delay(120);
+    if (WiFi.softAPIP() == IPAddress(0, 0, 0, 0))
+    {
+      delay(200);
+      startHotspot();
+    }
     if (wifiSsid.length() > 0)
     {
       connectStationWiFi();
@@ -1418,6 +1428,7 @@ namespace
 
 void restorePortalWiFiAfterDeauth()
 {
+  restoreWifiRegAfterInjection();
   portalRestoreWiFiAfterDeauth_body();
 }
 

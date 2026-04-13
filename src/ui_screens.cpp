@@ -131,11 +131,14 @@ void drawScreen()
     if (deautherRunning)
     {
       display.println(F("ATAQUE ATIVO"));
-      display.setCursor(0, 32);
-      display.print(F("Pacotes: "));
+      display.setCursor(0, 26);
+      display.print(F("OK drv:"));
       display.println(deautherPacketsSent);
-      display.setCursor(0, 48);
-      display.println(F("FLASH para PARAR"));
+      display.setCursor(0, 38);
+      display.print(F("Falha:"));
+      display.println(deautherInjectFail);
+      display.setCursor(0, 52);
+      display.println(F("FLASH=parar"));
     }
     else
     {
