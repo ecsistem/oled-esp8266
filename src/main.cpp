@@ -11,6 +11,17 @@ namespace
 {
   constexpr uint8_t flashButtonPin = 0;
   constexpr unsigned long flashHoldMs = 1200;
+  constexpr unsigned long eyeScreenMultiplier = 2;
+
+  unsigned long currentScreenIntervalMs()
+  {
+    if (screen == 0)
+    {
+      return screenChangeIntervalMs * eyeScreenMultiplier;
+    }
+
+    return screenChangeIntervalMs;
+  }
 
   void handleFlashButton()
   {
@@ -75,7 +86,7 @@ void loop()
     lastWeatherUpdate = millis();
   }
 
-  if (millis() - lastScreenChange > screenChangeIntervalMs)
+  if (millis() - lastScreenChange > currentScreenIntervalMs())
   {
     screen++;
     if (screen > 4)

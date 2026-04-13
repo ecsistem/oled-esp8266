@@ -2,271 +2,128 @@
 
 #include <Arduino.h>
 #include <ESP8266WiFi.h>
+#include <FluxGarage_RoboEyes.h>
 
 #include "app_state.h"
 
 namespace
 {
-  const int eyeWidth = 38;
-  const int eyeHeight = 24;
-  const int eyeRadius = 8;
-  const int eyeGap = 10;
-  const int pupilRadius = 4;
+  RoboEyes<Adafruit_SSD1306> roboEyes(display);
 
-  int pupilOffsetX = 0;
-  int pupilOffsetY = 0;
-  int eyelid = 0;
-  bool closingBlink = false;
-  bool angryEyes = false;
-  bool evilEyes = false;
-  bool deadEyes = false;
-
-  unsigned long lastEyeFrame = 0;
-  unsigned long nextBlinkAt = 0;
-  unsigned long nextLookAt = 0;
-
-  void drawAngryBrows(int leftX, int rightX, int y)
+  enum class EyeMode
   {
-    display.drawLine(leftX + 6, y + 6, leftX + eyeWidth - 6, y + 1, BLACK);
-    display.drawLine(leftX + 6, y + 7, leftX + eyeWidth - 6, y + 2, BLACK);
+    normal,
+    angry,
+    evil,
+    dead
+  };
 
-    display.drawLine(rightX + 6, y + 1, rightX + eyeWidth - 6, y + 6, BLACK);
-    display.drawLine(rightX + 6, y + 2, rightX + eyeWidth - 6, y + 7, BLACK);
+  bool roboEyesInitialized = false;
+  EyeMode currentMode = EyeMode::normal;
+
+  void initRoboEyesIfNeeded()
+  {
+    if (roboEyesInitialized)
+    {
+      return;
+    }
+
+    roboEyes.begin(SCREEN_WIDTH, SCREEN_HEIGHT, 100);
+    roboEyes.setWidth(38, 38);
+    roboEyes.setHeight(24, 24);
+    roboEyes.setBorderradius(8, 8);
+    roboEyes.setSpacebetween(10);
+    roboEyes.setMood(DEFAULT);
+    roboEyes.setPosition(DEFAULT);
+    roboEyes.setAutoblinker(ON, 3, 2);
+    roboEyes.setIdleMode(ON, 2, 2);
+    roboEyes.open();
+
+    roboEyesInitialized = true;
   }
 
-  void drawDeadEyeSingle(int x, int y, bool leftEye, int phase)
+  void applyEyeMode(EyeMode mode)
   {
-    int centerX = x + eyeWidth / 2;
-    int centerY = y + eyeHeight / 2;
-    int upperY = y + 8 + (phase % 2);
-    int lowerY = y + eyeHeight - 8 - (phase % 2);
-    int innerX = leftEye ? centerX + 2 : centerX - 2;
-    int outerX = leftEye ? x + eyeWidth - 5 : x + 5;
+    if (mode == currentMode)
+    {
+      return;
+    }
 
-    display.drawLine(innerX - 8, upperY, outerX, centerY - 1, BLACK);
-    display.drawLine(innerX - 8, upperY + 1, outerX, centerY, BLACK);
+    currentMode = mode;
 
-    display.drawLine(innerX - 8, lowerY, outerX, centerY + 1, BLACK);
-    display.drawLine(innerX - 8, lowerY - 1, outerX, centerY, BLACK);
+    if (mode == EyeMode::dead)
+    {
+      roboEyes.setMood(TIRED);
+      roboEyes.setPosition(DEFAULT);
+      roboEyes.setAutoblinker(OFF, 3, 2);
+      roboEyes.setIdleMode(OFF, 2, 2);
+      roboEyes.close();
+      return;
+    }
 
-    display.drawLine(centerX - 5, centerY - 2, centerX + 4, centerY + 2, BLACK);
-    display.drawLine(centerX - 5, centerY + 2, centerX + 4, centerY - 2, BLACK);
+    roboEyes.open();
 
-    int glitchY = y + eyeHeight - 4 - (phase % 3);
-    display.drawLine(x + 11, glitchY, x + eyeWidth - 11, glitchY, BLACK);
-  }
+    if (mode == EyeMode::evil)
+    {
+      roboEyes.setMood(ANGRY);
+      roboEyes.setHeight(20, 20);
+      roboEyes.setBorderradius(6, 6);
+      roboEyes.setPosition(DEFAULT);
+      roboEyes.setAutoblinker(ON, 2, 1);
+      roboEyes.setIdleMode(ON, 1, 1);
+      return;
+    }
 
-  void drawDeadEyes(int leftX, int rightX, int y)
-  {
-    int phase = (millis() / 180) % 4;
-    drawDeadEyeSingle(leftX, y, true, phase);
-    drawDeadEyeSingle(rightX, y, false, phase + 1);
-  }
+    if (mode == EyeMode::angry)
+    {
+      roboEyes.setMood(ANGRY);
+      roboEyes.setHeight(24, 24);
+      roboEyes.setBorderradius(8, 8);
+      roboEyes.setPosition(DEFAULT);
+      roboEyes.setAutoblinker(ON, 3, 2);
+      roboEyes.setIdleMode(ON, 2, 1);
+      return;
+    }
 
-  void drawEvilEyesShape(int leftX, int rightX, int y)
-  {
-    // Formato cilíndrico/arredondado tipo na imagem
-    int radius = 6;
-
-    // Olho esquerdo - retângulo arredondado levemente inclinado
-    display.fillRoundRect(leftX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, WHITE);
-    display.drawRoundRect(leftX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, BLACK);
-
-    // Olho direito - retângulo arredondado levemente inclinado
-    display.fillRoundRect(rightX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, WHITE);
-    display.drawRoundRect(rightX + 2, y + 1, eyeWidth - 4, eyeHeight - 2, radius, BLACK);
-
-    // Detalhes de profundidade - linhas finas nos lados
-    display.drawLine(leftX + 2, y + 3, leftX + 2, y + eyeHeight - 3, BLACK);
-    display.drawLine(rightX + eyeWidth - 2, y + 3, rightX + eyeWidth - 2, y + eyeHeight - 3, BLACK);
-
-    // Sobrancelha malvada: barra alta e inclinada para dentro, sem cair no canto externo
-    display.fillRect(leftX + 1, y + 1, eyeWidth - 2, 5, BLACK);
-    display.fillRect(rightX + 1, y + 1, eyeWidth - 2, 5, BLACK);
-
-    // Corte diagonal para apertar o olhar no centro, sem baixar demais a borda externa
-    display.drawLine(leftX + 2, y + 2, leftX + eyeWidth - 4, y + 4, BLACK);
-    display.drawLine(leftX + 2, y + 3, leftX + eyeWidth - 4, y + 5, BLACK);
-    display.drawLine(rightX + 2, y + 4, rightX + eyeWidth - 4, y + 2, BLACK);
-    display.drawLine(rightX + 2, y + 5, rightX + eyeWidth - 4, y + 3, BLACK);
-
-    // Pequeno “peso” interno para reforçar a cara de mal
-    display.fillRect(leftX + eyeWidth - 9, y + 3, 5, 3, BLACK);
-    display.fillRect(rightX + 4, y + 3, 5, 3, BLACK);
-  }
-
-  void drawEvilPupil(int centerX, int centerY)
-  {
-    // Pupila tipo fenda vertical malvada e afiada
-    display.fillRect(centerX - 1, centerY - 6, 2, 12, BLACK);
-
-    // Pico superior tipo chama
-    display.drawPixel(centerX, centerY - 7, BLACK);
-    display.drawPixel(centerX - 1, centerY - 7, BLACK);
-    display.drawPixel(centerX + 1, centerY - 7, BLACK);
+    roboEyes.setMood(DEFAULT);
+    roboEyes.setHeight(24, 24);
+    roboEyes.setBorderradius(8, 8);
+    roboEyes.setPosition(DEFAULT);
+    roboEyes.setAutoblinker(ON, 3, 2);
+    roboEyes.setIdleMode(ON, 2, 2);
   }
 } // namespace
 
 void updateEyeAnimation()
 {
-  unsigned long now = millis();
+  initRoboEyesIfNeeded();
 
-  if (now - lastEyeFrame < 40)
+  bool hasApMode = WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA;
+  bool captivePortalActive = captivePortalEnabled && hasApMode;
+  bool deadEyes = !captivePortalActive && WiFi.status() != WL_CONNECTED;
+  bool evilEyes = !deadEyes && (captivePortalActive || millis() < evilUntil);
+  bool angryEyes = !deadEyes && !evilEyes && millis() < angryUntil;
+
+  if (deadEyes)
   {
-    return;
+    applyEyeMode(EyeMode::dead);
   }
-
-  lastEyeFrame = now;
-
-  if (nextBlinkAt == 0)
+  else if (evilEyes)
   {
-    nextBlinkAt = now + random(1500, 3500);
-    nextLookAt = now + random(600, 1200);
+    applyEyeMode(EyeMode::evil);
   }
-
-  if (now >= nextBlinkAt || eyelid > 0)
+  else if (angryEyes)
   {
-    if (eyelid == 0)
-    {
-      closingBlink = true;
-    }
-
-    if (closingBlink)
-    {
-      eyelid += 4;
-      if (eyelid >= eyeHeight)
-      {
-        eyelid = eyeHeight;
-        closingBlink = false;
-      }
-    }
-    else
-    {
-      eyelid -= 4;
-      if (eyelid <= 0)
-      {
-        eyelid = 0;
-        nextBlinkAt = now + random(2000, 4500);
-      }
-    }
+    applyEyeMode(EyeMode::angry);
   }
-
-  if (now >= nextLookAt && eyelid < eyeHeight - 6)
+  else
   {
-    int look = random(0, 5);
-
-    if (look == 0)
-    {
-      pupilOffsetX = 0;
-      pupilOffsetY = 0;
-    }
-    else if (look == 1)
-    {
-      pupilOffsetX = -6;
-      pupilOffsetY = 0;
-    }
-    else if (look == 2)
-    {
-      pupilOffsetX = 6;
-      pupilOffsetY = 0;
-    }
-    else if (look == 3)
-    {
-      pupilOffsetX = 0;
-      pupilOffsetY = -3;
-    }
-    else
-    {
-      pupilOffsetX = 0;
-      pupilOffsetY = 3;
-    }
-
-    nextLookAt = now + random(600, 1600);
+    applyEyeMode(EyeMode::normal);
   }
 }
 
 void drawEyeAnimation()
 {
-  bool hasApMode = WiFi.getMode() == WIFI_AP || WiFi.getMode() == WIFI_AP_STA;
-  bool captivePortalActive = captivePortalEnabled && hasApMode;
-
-  deadEyes = !captivePortalActive && WiFi.status() != WL_CONNECTED;
-  evilEyes = !deadEyes && (captivePortalActive || millis() < evilUntil);
-  angryEyes = !deadEyes && !evilEyes && millis() < angryUntil;
-
-  int totalEyesWidth = (eyeWidth * 2) + eyeGap;
-  int startX = (SCREEN_WIDTH - totalEyesWidth) / 2;
-  int y = 18;
-
-  int leftX = startX;
-  int rightX = startX + eyeWidth + eyeGap;
-
-  if (evilEyes)
-  {
-    drawEvilEyesShape(leftX, rightX, y);
-  }
-  else
-  {
-    display.fillRoundRect(leftX, y, eyeWidth, eyeHeight, eyeRadius, WHITE);
-    display.fillRoundRect(rightX, y, eyeWidth, eyeHeight, eyeRadius, WHITE);
-  }
-
-  int pupilMinX = -(eyeWidth / 2 - pupilRadius - 4);
-  int pupilMaxX = (eyeWidth / 2 - pupilRadius - 4);
-  int pupilMinY = -(eyeHeight / 2 - pupilRadius - 4);
-  int pupilMaxY = (eyeHeight / 2 - pupilRadius - 4);
-
-  int px = constrain(pupilOffsetX, pupilMinX, pupilMaxX);
-  int py = constrain(pupilOffsetY, pupilMinY, pupilMaxY);
-
-  int leftCenterX = leftX + eyeWidth / 2;
-  int rightCenterX = rightX + eyeWidth / 2;
-  int centerY = y + eyeHeight / 2;
-  int leftPx = px;
-  int rightPx = px;
-
-  if (evilEyes)
-  {
-    leftPx = constrain(px + 7, pupilMinX, pupilMaxX);
-    rightPx = constrain(px - 7, pupilMinX, pupilMaxX);
-  }
-
-  if (deadEyes)
-  {
-    drawDeadEyes(leftX, rightX, y);
-    return;
-  }
-
-  if (evilEyes)
-  {
-    int leftPupilX = leftCenterX + leftPx;
-    int rightPupilX = rightCenterX + rightPx;
-
-    drawEvilPupil(leftPupilX, centerY + py);
-    drawEvilPupil(rightPupilX, centerY + py);
-  }
-  else
-  {
-    display.fillCircle(leftCenterX + leftPx, centerY + py, pupilRadius, BLACK);
-    display.fillCircle(rightCenterX + rightPx, centerY + py, pupilRadius, BLACK);
-  }
-
-  if (angryEyes)
-  {
-    drawAngryBrows(leftX, rightX, y);
-    display.fillRect(leftX + 4, y + 2, eyeWidth - 8, 3, BLACK);
-    display.fillRect(rightX + 4, y + 2, eyeWidth - 8, 3, BLACK);
-  }
-
-  if (eyelid > 0 && !evilEyes)
-  {
-    int topCover = eyelid / 2;
-    int bottomCover = eyelid - topCover;
-
-    display.fillRect(leftX, y, eyeWidth, topCover, BLACK);
-    display.fillRect(rightX, y, eyeWidth, topCover, BLACK);
-
-    display.fillRect(leftX, y + eyeHeight - bottomCover, eyeWidth, bottomCover, BLACK);
-    display.fillRect(rightX, y + eyeHeight - bottomCover, eyeWidth, bottomCover, BLACK);
-  }
+  initRoboEyesIfNeeded();
+  roboEyes.update();
 }
