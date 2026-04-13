@@ -65,18 +65,18 @@ namespace
 
   void drawEvilEyesShape(int leftX, int rightX, int y)
   {
-    int leftTopX = leftX + 2;
-    int leftTopY = y + 2;
-    int leftBottomX = leftX + 2;
-    int leftBottomY = y + eyeHeight - 2;
-    int leftApexX = leftX + eyeWidth - 2;
+    int leftTopX = leftX + 4;
+    int leftTopY = y + 1;
+    int leftBottomX = leftX + 4;
+    int leftBottomY = y + eyeHeight - 1;
+    int leftApexX = leftX + eyeWidth - 1;
     int leftApexY = y + eyeHeight / 2;
 
-    int rightTopX = rightX + eyeWidth - 2;
-    int rightTopY = y + 2;
-    int rightBottomX = rightX + eyeWidth - 2;
-    int rightBottomY = y + eyeHeight - 2;
-    int rightApexX = rightX + 2;
+    int rightTopX = rightX + eyeWidth - 4;
+    int rightTopY = y + 1;
+    int rightBottomX = rightX + eyeWidth - 4;
+    int rightBottomY = y + eyeHeight - 1;
+    int rightApexX = rightX + 1;
     int rightApexY = y + eyeHeight / 2;
 
     display.fillTriangle(leftTopX, leftTopY, leftBottomX, leftBottomY, leftApexX, leftApexY, WHITE);
@@ -84,6 +84,11 @@ namespace
 
     display.drawTriangle(leftTopX, leftTopY, leftBottomX, leftBottomY, leftApexX, leftApexY, BLACK);
     display.drawTriangle(rightTopX, rightTopY, rightBottomX, rightBottomY, rightApexX, rightApexY, BLACK);
+
+    display.drawLine(leftTopX, leftTopY - 1, leftApexX + 2, leftApexY - 3, BLACK);
+    display.drawLine(leftBottomX, leftBottomY + 1, leftApexX + 2, leftApexY + 3, BLACK);
+    display.drawLine(rightTopX, rightTopY - 1, rightApexX - 2, rightApexY - 3, BLACK);
+    display.drawLine(rightBottomX, rightBottomY + 1, rightApexX - 2, rightApexY + 3, BLACK);
   }
 } // namespace
 
@@ -221,13 +226,21 @@ void drawEyeAnimation()
   {
     int leftPupilX = leftCenterX + leftPx;
     int rightPupilX = rightCenterX + rightPx;
-    int topY = centerY + py - 5;
-    int bottomY = centerY + py + 5;
+    int topY = centerY + py - 6;
+    int bottomY = centerY + py + 6;
 
-    display.drawLine(leftPupilX, topY, leftPupilX, bottomY, BLACK);
-    display.drawLine(leftPupilX + 1, topY, leftPupilX + 1, bottomY, BLACK);
-    display.drawLine(rightPupilX, topY, rightPupilX, bottomY, BLACK);
-    display.drawLine(rightPupilX + 1, topY, rightPupilX + 1, bottomY, BLACK);
+    display.fillRect(leftPupilX - 1, topY, 2, 12, BLACK);
+    display.fillRect(rightPupilX - 1, topY, 2, 12, BLACK);
+
+    display.drawPixel(leftPupilX - 2, topY - 1, BLACK);
+    display.drawPixel(leftPupilX + 2, topY - 1, BLACK);
+    display.drawPixel(leftPupilX - 2, bottomY + 1, BLACK);
+    display.drawPixel(leftPupilX + 2, bottomY + 1, BLACK);
+
+    display.drawPixel(rightPupilX - 2, topY - 1, BLACK);
+    display.drawPixel(rightPupilX + 2, topY - 1, BLACK);
+    display.drawPixel(rightPupilX - 2, bottomY + 1, BLACK);
+    display.drawPixel(rightPupilX + 2, bottomY + 1, BLACK);
   }
   else
   {
