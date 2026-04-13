@@ -1144,6 +1144,11 @@ namespace
     page += "<div class='card'>";
     page += "<h3>Deauther Wi-Fi</h3>";
     page += "<p class='muted'>Busque redes Wi-Fi proximas e selecione um alvo para ataque de deautenticação.</p>";
+    page += "<p><strong>Status:</strong> " + String(deautherRunning ? "<span class='ok'>ATIVO</span>" : "<span class='bad'>PARADO</span>") + "</p>";
+    if (deautherRunning)
+    {
+      page += "<p><strong>Pacotes enviados:</strong> " + String(deautherPacketsSent) + "</p>";
+    }
     page += "<button onclick='loadNetworks()'>Buscar Redes Wi-Fi</button>";
     page += "<div id='networksList' style='margin-top:12px;'></div>";
     page += "<div id='deautherControls' style='margin-top:12px;display:none;'>";
@@ -1217,6 +1222,8 @@ namespace
     doc["deauther_ap_mac"] = deautherApMac;
     doc["deauther_client_mac"] = deautherClientMac;
     doc["deauther_channel"] = deautherChannel;
+    doc["deauther_running"] = deautherRunning;
+    doc["deauther_packets_sent"] = deautherPacketsSent;
 
     String payload;
     serializeJson(doc, payload);

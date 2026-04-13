@@ -128,21 +128,22 @@ void drawScreen()
     display.println(F("Wi-Fi Deauther"));
 
     display.setCursor(0, 16);
-    if (isDeauthActive())
+    if (deautherRunning)
     {
       display.println(F("ATAQUE ATIVO"));
       display.setCursor(0, 32);
-      display.println(F("Pressione FLASH"));
+      display.print(F("Pacotes: "));
+      display.println(deautherPacketsSent);
       display.setCursor(0, 48);
-      display.println(F("para PARAR"));
+      display.println(F("FLASH para PARAR"));
     }
     else
     {
       display.println(F("ATAQUE PARADO"));
       display.setCursor(0, 32);
-      display.println(F("Pressione FLASH"));
+      display.println(F("Configure via web"));
       display.setCursor(0, 48);
-      display.println(F("para INICIAR"));
+      display.println(F("FLASH para INICIAR"));
     }
   }
 

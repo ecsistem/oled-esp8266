@@ -8,6 +8,9 @@ extern "C"
 #include "user_interface.h"
 }
 
+bool deautherRunning = false;
+unsigned long deautherPacketsSent = 0;
+
 // Variáveis de controle do ataque
 static bool attackActive = false;
 static uint8_t targetApMac[6];
@@ -75,6 +78,7 @@ void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t rea
   }
 
   deauthPacket[0] = 0xC0; // volta para deauth
+  deautherPacketsSent += 10;
 }
 
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
@@ -84,6 +88,7 @@ void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint
   targetChannel = channel;
   attackReason = reason;
   attackActive = true;
+  deautherRunning = true;
   lastAttackPacketAt = millis();
 
   // Envia o primeiro imediatamente
@@ -93,6 +98,7 @@ void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint
 void stopDeauthAttack()
 {
   attackActive = false;
+  deautherRunning = false;
 }
 
 bool isDeauthActive()

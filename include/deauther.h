@@ -12,3 +12,5 @@ void toggleDeauther();
 extern String deautherApMac;
 extern String deautherClientMac;
 extern int deautherChannel;
+extern bool deautherRunning;
+extern unsigned long deautherPacketsSent;
