@@ -20,7 +20,7 @@ void drawScreen()
   {
     display.setTextSize(1);
     display.setCursor(0, 0);
-    display.println("WIFI STATUS");
+    display.println(WiFi.SSID());
 
     display.setCursor(0, 20);
     display.print("STA: ");
