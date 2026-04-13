@@ -1402,7 +1402,24 @@ namespace
       server.send(404, "text/plain; charset=utf-8", "Rota nao encontrada. Abra /admin"); });
     server.begin();
   }
+
+  void portalRestoreWiFiAfterDeauth_body()
+  {
+    WiFi.persistent(false);
+    WiFi.mode(WIFI_AP_STA);
+    delay(100);
+    startHotspot();
+    if (wifiSsid.length() > 0)
+    {
+      connectStationWiFi();
+    }
+  }
 } // namespace
+
+void restorePortalWiFiAfterDeauth()
+{
+  portalRestoreWiFiAfterDeauth_body();
+}
 
 void initWiFiAndPortal()
 {
