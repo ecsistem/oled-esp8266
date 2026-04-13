@@ -12,8 +12,9 @@ extern Adafruit_SSD1306 display;
 extern String wifiSsid;
 extern String wifiPassword;
 extern const char *wifiConfigPath;
-extern const char *apPassword;
 extern String apSsid;
+extern String apPassword;
+extern bool apOpen;
 extern unsigned long lastConnectAttemptAt;
 
 extern ESP8266WebServer server;

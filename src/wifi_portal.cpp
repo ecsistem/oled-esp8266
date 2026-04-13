@@ -61,6 +61,9 @@ namespace
 
     wifiSsid = doc["ssid"] | wifiSsid;
     wifiPassword = doc["password"] | wifiPassword;
+    apSsid = doc["ap_ssid"] | apSsid;
+    apPassword = doc["ap_password"] | apPassword;
+    apOpen = doc["ap_open"] | apOpen;
     weatherUpdateIntervalMs = doc["weather_interval_ms"] | weatherUpdateIntervalMs;
     screenChangeIntervalMs = doc["screen_change_ms"] | screenChangeIntervalMs;
     timezoneOffsetHours = doc["timezone_offset_hours"] | timezoneOffsetHours;
@@ -72,6 +75,9 @@ namespace
     JsonDocument doc;
     doc["ssid"] = wifiSsid;
     doc["password"] = wifiPassword;
+    doc["ap_ssid"] = apSsid;
+    doc["ap_password"] = apPassword;
+    doc["ap_open"] = apOpen;
     doc["weather_interval_ms"] = weatherUpdateIntervalMs;
     doc["screen_change_ms"] = screenChangeIntervalMs;
     doc["timezone_offset_hours"] = timezoneOffsetHours;
@@ -157,12 +163,24 @@ namespace
 
   void startHotspot()
   {
-    apSsid = "OLED-" + String(ESP.getChipId(), HEX);
+    if (apSsid.length() == 0)
+    {
+      apSsid = "OLED-" + String(ESP.getChipId(), HEX);
+    }
 
     WiFi.softAPdisconnect(true);
     delay(100);
 
-    bool apStarted = WiFi.softAP(apSsid.c_str(), apPassword, 1, false, 4);
+    bool apStarted = false;
+
+    if (apOpen)
+    {
+      apStarted = WiFi.softAP(apSsid.c_str(), nullptr, 1, false, 4);
+    }
+    else
+    {
+      apStarted = WiFi.softAP(apSsid.c_str(), apPassword.c_str(), 1, false, 4);
+    }
 
     if (!apStarted)
     {
@@ -595,6 +613,9 @@ namespace
     page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}input,select,button{width:100%;padding:12px;margin:8px 0;border-radius:10px;border:0}input,select{background:#222;color:#fff}button{background:#00a6ff;color:#fff;font-weight:bold} .card{background:#1b1b1b;padding:18px;border-radius:16px;margin-bottom:12px} .muted{color:#aaa;font-size:14px} .secondary{background:#2a2a2a} .ok{color:#58d68d}.bad{color:#ff7675}</style></head><body>";
     page += "<div class='card'><h2>Configurar Wi-Fi</h2>";
     page += "<p class='muted'>Conectado ao hotspot: " + apSsid + "</p>";
+    page += "<p class='muted'>Seguranca AP: ";
+    page += apOpen ? "Aberto (sem senha)" : "WPA2";
+    page += "</p>";
     page += "<p class='muted'>Status STA: ";
     page += staConnected ? "<span class='ok'>Conectado</span>" : "<span class='bad'>" + wifiStatusToText(staStatus) + "</span>";
     page += "</p>";
@@ -607,6 +628,13 @@ namespace
     page += wifiOptions;
     page += "</select>";
     page += "<input name='password' placeholder='Senha do Wi-Fi' type='password' value='" + escapeHtml(wifiPassword) + "'>";
+    page += "<h3>Hotspot do dispositivo</h3>";
+    page += "<label>Nome do hotspot (AP)</label>";
+    page += "<input name='ap_ssid' maxlength='31' value='" + escapeHtml(apSsid) + "'>";
+    page += "<label><input name='ap_open' type='checkbox'";
+    page += apOpen ? " checked" : "";
+    page += "> Hotspot aberto (sem senha)</label>";
+    page += "<input name='ap_password' placeholder='Senha AP (minimo 8 caracteres)' type='password' value='" + escapeHtml(apPassword) + "'>";
     page += "<h3>Ajustes do Sistema</h3>";
     page += "<label>Intervalo do clima (segundos)</label>";
     page += "<input name='weather_sec' type='number' min='10' max='3600' value='" + String(weatherUpdateIntervalMs / 1000) + "'>";
@@ -656,6 +684,7 @@ namespace
     doc["sta_ip"] = staConnected ? WiFi.localIP().toString() : String("-");
     doc["rssi"] = staConnected ? String(WiFi.RSSI()) + " dBm" : String("-");
     doc["ap_ssid"] = apSsid;
+    doc["ap_open"] = apOpen;
     doc["ap_ip"] = WiFi.softAPIP().toString();
     doc["ap_clients"] = WiFi.softAPgetStationNum();
     doc["saved_ssid"] = wifiSsid;
@@ -678,6 +707,9 @@ namespace
   {
     String newSsid = server.arg("ssid");
     String newPassword = server.arg("password");
+    String newApSsid = server.arg("ap_ssid");
+    String newApPassword = server.arg("ap_password");
+    bool newApOpen = server.hasArg("ap_open");
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
@@ -689,8 +721,22 @@ namespace
       return;
     }
 
+    if (newApSsid.length() == 0)
+    {
+      newApSsid = "OLED-" + String(ESP.getChipId(), HEX);
+    }
+
+    if (!newApOpen && newApPassword.length() < 8)
+    {
+      server.send(400, "text/plain; charset=utf-8", "Senha do hotspot deve ter no minimo 8 caracteres ou marque hotspot aberto");
+      return;
+    }
+
     wifiSsid = newSsid;
     wifiPassword = newPassword;
+    apSsid = newApSsid;
+    apPassword = newApPassword;
+    apOpen = newApOpen;
     weatherUpdateIntervalMs = weatherSec * 1000;
     screenChangeIntervalMs = screenSec * 1000;
     timezoneOffsetHours = newTz;
@@ -713,6 +759,7 @@ namespace
 
     server.send(200, "text/html; charset=utf-8", page);
 
+    startHotspot();
     WiFi.disconnect();
     connectStationWiFi();
   }

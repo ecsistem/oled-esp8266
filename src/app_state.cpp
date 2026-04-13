@@ -7,8 +7,9 @@ Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, -1);
 String wifiSsid = "OLIVEIRA";
 String wifiPassword = "residencial242";
 const char *wifiConfigPath = "/wifi.json";
-const char *apPassword = "12345678";
 String apSsid;
+String apPassword = "12345678";
+bool apOpen = false;
 unsigned long lastConnectAttemptAt = 0;
 
 ESP8266WebServer server(80);

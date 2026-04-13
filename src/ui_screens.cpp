@@ -55,24 +55,24 @@ void drawScreen()
   }
   else if (screen == 3)
   {
-    display.setTextSize(1);
-    display.setCursor(0, 0);
-    display.println("RELOGIO");
-
     struct tm timeinfo;
 
     if (getLocalTime(&timeinfo))
     {
-      display.setTextSize(2);
-      display.setCursor(10, 25);
-      display.printf("%02d:%02d:%02d",
+      display.setTextSize(3);
+      display.setCursor(2, 14);
+      display.printf("%02d:%02d",
                      timeinfo.tm_hour,
-                     timeinfo.tm_min,
-                     timeinfo.tm_sec);
+                     timeinfo.tm_min);
+
+      display.setTextSize(1);
+      display.setCursor(112, 34);
+      display.printf("%02d", timeinfo.tm_sec);
     }
     else
     {
-      display.setCursor(0, 30);
+      display.setTextSize(2);
+      display.setCursor(10, 24);
       display.println("Sem hora");
     }
   }
