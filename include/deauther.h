@@ -8,9 +8,16 @@ void stopDeauthAttack();
 bool isDeauthActive();
 void updateDeauth();
 void toggleDeauther();
+void startBeaconAttack();
+void stopBeaconAttack();
+void updateBeacon();
 
 extern String deautherApMac;
 extern String deautherClientMac;
 extern int deautherChannel;
 extern bool deautherRunning;
 extern unsigned long deautherPacketsSent;
+extern bool beaconActive;
+extern unsigned long beaconPacketsSent;
+extern bool beaconActive;
+extern unsigned long beaconPacketsSent;

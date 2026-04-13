@@ -602,6 +602,30 @@ namespace
     server.send(200, "application/json; charset=utf-8", payload);
   }
 
+  void handleApiBeaconStart()
+  {
+    startBeaconAttack();
+
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["message"] = "Beacon attack started";
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
+  }
+
+  void handleApiBeaconStop()
+  {
+    stopBeaconAttack();
+
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["message"] = "Beacon attack stopped";
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
+  }
+
   void handleApiScanJson()
   {
     int n = WiFi.scanNetworks(false, true);
@@ -1096,6 +1120,20 @@ namespace
     page += "    alert(j.message);";
     page += "  }catch(e){alert('Erro ao parar ataque');}";
     page += "}";
+    page += "async function startBeacon(){";
+    page += "  try{";
+    page += "    const r = await fetch('/api/beacon/start', {method:'POST'});";
+    page += "    const j = await r.json();";
+    page += "    alert(j.message);";
+    page += "  }catch(e){alert('Erro ao iniciar beacon flood');}";
+    page += "}";
+    page += "async function stopBeacon(){";
+    page += "  try{";
+    page += "    const r = await fetch('/api/beacon/stop', {method:'POST'});";
+    page += "    const j = await r.json();";
+    page += "    alert(j.message);";
+    page += "  }catch(e){alert('Erro ao parar beacon flood');}";
+    page += "}";
     page += "</script>";
 
     page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}";
@@ -1156,6 +1194,19 @@ namespace
     page += "<button onclick='startDeauth()'>Iniciar Ataque</button>";
     page += "<button onclick='stopDeauth()' style='background:#8b2d2d;margin-left:8px;'>Parar Ataque</button>";
     page += "</div>";
+    page += "</div>";
+
+    // Beacon Flood
+    page += "<div class='card'>";
+    page += "<h3>Beacon Flood</h3>";
+    page += "<p class='muted'>Inunda a area com beacons de redes falsas para poluir a lista de Wi-Fi.</p>";
+    page += "<p><strong>Status:</strong> " + String(beaconActive ? "<span class='ok'>ATIVO</span>" : "<span class='bad'>PARADO</span>") + "</p>";
+    if (beaconActive)
+    {
+      page += "<p><strong>Pacotes enviados:</strong> " + String(beaconPacketsSent) + "</p>";
+    }
+    page += "<button onclick='startBeacon()'>Iniciar Beacon Flood</button>";
+    page += "<button onclick='stopBeacon()' style='background:#8b2d2d;margin-left:8px;'>Parar Beacon Flood</button>";
     page += "</div>";
 
     // Seções restantes (mantidas)
@@ -1224,6 +1275,8 @@ namespace
     doc["deauther_channel"] = deautherChannel;
     doc["deauther_running"] = deautherRunning;
     doc["deauther_packets_sent"] = deautherPacketsSent;
+    doc["beacon_active"] = beaconActive;
+    doc["beacon_packets_sent"] = beaconPacketsSent;
 
     String payload;
     serializeJson(doc, payload);
@@ -1333,6 +1386,8 @@ namespace
     server.on("/api/scan", HTTP_GET, handleApiScanJson);
     server.on("/api/deauth/start", HTTP_POST, handleApiDeauthStart);
     server.on("/api/deauth/stop", HTTP_POST, handleApiDeauthStop);
+    server.on("/api/beacon/start", HTTP_POST, handleApiBeaconStart);
+    server.on("/api/beacon/stop", HTTP_POST, handleApiBeaconStop);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/credentials/delete", HTTP_POST, handleDeleteCapturedCredential);
     server.on("/credentials/clear", HTTP_POST, handleClearCapturedCredentials);

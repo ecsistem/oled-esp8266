@@ -121,6 +121,7 @@ void loop()
   handlePortalClient();
   handleFlashButton();
   updateDeauth();
+  updateBeacon();
 
   if (!isScreenEnabled(screen))
   {
