@@ -33,18 +33,33 @@ namespace
     display.drawLine(rightX + 6, y + 2, rightX + eyeWidth - 6, y + 7, BLACK);
   }
 
+  void drawDeadEyeSingle(int x, int y, bool leftEye, int phase)
+  {
+    int centerX = x + eyeWidth / 2;
+    int centerY = y + eyeHeight / 2;
+    int upperY = y + 8 + (phase % 2);
+    int lowerY = y + eyeHeight - 8 - (phase % 2);
+    int innerX = leftEye ? centerX + 2 : centerX - 2;
+    int outerX = leftEye ? x + eyeWidth - 5 : x + 5;
+
+    display.drawLine(innerX - 8, upperY, outerX, centerY - 1, BLACK);
+    display.drawLine(innerX - 8, upperY + 1, outerX, centerY, BLACK);
+
+    display.drawLine(innerX - 8, lowerY, outerX, centerY + 1, BLACK);
+    display.drawLine(innerX - 8, lowerY - 1, outerX, centerY, BLACK);
+
+    display.drawLine(centerX - 5, centerY - 2, centerX + 4, centerY + 2, BLACK);
+    display.drawLine(centerX - 5, centerY + 2, centerX + 4, centerY - 2, BLACK);
+
+    int glitchY = y + eyeHeight - 4 - (phase % 3);
+    display.drawLine(x + 11, glitchY, x + eyeWidth - 11, glitchY, BLACK);
+  }
+
   void drawDeadEyes(int leftX, int rightX, int y)
   {
-    int eyeCenterY = y + eyeHeight / 2;
-
-    display.drawLine(leftX + 8, y + 6, leftX + eyeWidth - 8, y + eyeHeight - 6, BLACK);
-    display.drawLine(leftX + 8, y + eyeHeight - 6, leftX + eyeWidth - 8, y + 6, BLACK);
-
-    display.drawLine(rightX + 8, y + 6, rightX + eyeWidth - 8, y + eyeHeight - 6, BLACK);
-    display.drawLine(rightX + 8, y + eyeHeight - 6, rightX + eyeWidth - 8, y + 6, BLACK);
-
-    display.drawLine(leftX + 12, eyeCenterY + 9, leftX + eyeWidth - 12, eyeCenterY + 9, BLACK);
-    display.drawLine(rightX + 12, eyeCenterY + 9, rightX + eyeWidth - 12, eyeCenterY + 9, BLACK);
+    int phase = (millis() / 180) % 4;
+    drawDeadEyeSingle(leftX, y, true, phase);
+    drawDeadEyeSingle(rightX, y, false, phase + 1);
   }
 } // namespace
 

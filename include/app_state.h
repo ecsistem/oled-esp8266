@@ -28,6 +28,7 @@ extern unsigned long weatherUpdateIntervalMs;
 extern unsigned long screenChangeIntervalMs;
 extern int timezoneOffsetHours;
 extern uint8_t oledBrightness;
+extern bool captivePortalEnabled;
 
 extern unsigned long angryUntil;
 extern const unsigned long angryHoldMs;

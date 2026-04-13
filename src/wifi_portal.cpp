@@ -14,6 +14,16 @@ namespace
   constexpr const char *capturedCredentialsPath = "/captured_credentials.json";
   DNSServer dnsServer;
 
+  void applyCaptivePortalDnsState()
+  {
+    dnsServer.stop();
+
+    if (captivePortalEnabled)
+    {
+      dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+    }
+  }
+
   String escapeHtml(const String &value)
   {
     String escaped;
@@ -68,6 +78,7 @@ namespace
     screenChangeIntervalMs = doc["screen_change_ms"] | screenChangeIntervalMs;
     timezoneOffsetHours = doc["timezone_offset_hours"] | timezoneOffsetHours;
     oledBrightness = doc["oled_brightness"] | oledBrightness;
+    captivePortalEnabled = doc["captive_portal_enabled"] | captivePortalEnabled;
   }
 
   bool saveWiFiConfig()
@@ -82,6 +93,7 @@ namespace
     doc["screen_change_ms"] = screenChangeIntervalMs;
     doc["timezone_offset_hours"] = timezoneOffsetHours;
     doc["oled_brightness"] = oledBrightness;
+    doc["captive_portal_enabled"] = captivePortalEnabled;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -187,11 +199,17 @@ namespace
       WiFi.softAP(apSsid.c_str());
     }
 
-    dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+    applyCaptivePortalDnsState();
   }
 
   void handleCaptiveRedirect()
   {
+    if (!captivePortalEnabled)
+    {
+      server.send(404, "text/plain; charset=utf-8", "Captive portal desativado");
+      return;
+    }
+
     server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
     server.send(302, "text/plain", "");
   }
@@ -331,6 +349,13 @@ namespace
 
   void handleCredentialCapturePage()
   {
+    if (!captivePortalEnabled)
+    {
+      server.sendHeader("Location", "/admin", true);
+      server.send(302, "text/plain", "");
+      return;
+    }
+
     String page = R"rawliteral(
     <!DOCTYPE html>
     <html>
@@ -644,6 +669,9 @@ namespace
     page += "<input name='brightness' type='number' min='0' max='255' value='" + String(oledBrightness) + "'>";
     page += "<label>Troca de tela (segundos)</label>";
     page += "<input name='screen_sec' type='number' min='2' max='120' value='" + String(screenChangeIntervalMs / 1000) + "'>";
+    page += "<label><input name='captive_portal' type='checkbox'";
+    page += captivePortalEnabled ? " checked" : "";
+    page += "> Ativar captive portal</label>";
     page += "<button type='submit'>Salvar e conectar</button></form>";
     page += "<form method='get' action='/admin'><button class='secondary' type='submit'>Atualizar lista de redes</button></form>";
     page += "<form method='get' action='/status'><button class='secondary' type='submit'>Ver status completo</button></form>";
@@ -697,6 +725,7 @@ namespace
     doc["screen_change_interval_ms"] = screenChangeIntervalMs;
     doc["timezone_offset_hours"] = timezoneOffsetHours;
     doc["oled_brightness"] = oledBrightness;
+    doc["captive_portal_enabled"] = captivePortalEnabled;
 
     String payload;
     serializeJson(doc, payload);
@@ -710,6 +739,7 @@ namespace
     String newApSsid = server.arg("ap_ssid");
     String newApPassword = server.arg("ap_password");
     bool newApOpen = server.hasArg("ap_open");
+    bool newCaptivePortalEnabled = server.hasArg("captive_portal");
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
@@ -741,9 +771,11 @@ namespace
     screenChangeIntervalMs = screenSec * 1000;
     timezoneOffsetHours = newTz;
     oledBrightness = static_cast<uint8_t>(newBrightness);
+    captivePortalEnabled = newCaptivePortalEnabled;
 
     applyDisplayAndTimeSettings();
     bool saved = saveWiFiConfig();
+    applyCaptivePortalDnsState();
 
     String page;
     page += "<!doctype html><html><head><meta charset='utf-8'>";
@@ -778,7 +810,15 @@ namespace
     server.on("/status", HTTP_GET, handleStatusPage);
     server.on("/api/status", HTTP_GET, handleStatusJson);
     server.on("/save", HTTP_POST, handleSave);
-    server.onNotFound(handleCaptiveRedirect);
+    server.onNotFound([]()
+                      {
+      if (captivePortalEnabled)
+      {
+        handleCaptiveRedirect();
+        return;
+      }
+
+      server.send(404, "text/plain; charset=utf-8", "Rota nao encontrada. Abra /admin"); });
     server.begin();
   }
 } // namespace
@@ -808,5 +848,9 @@ void initWiFiAndPortal()
 void handlePortalClient()
 {
   server.handleClient();
-  dnsServer.processNextRequest();
+
+  if (captivePortalEnabled)
+  {
+    dnsServer.processNextRequest();
+  }
 }
