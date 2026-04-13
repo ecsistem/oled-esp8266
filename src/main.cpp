@@ -21,7 +21,7 @@ void setup()
 
   initWiFiAndPortal();
 
-  configTime(-3 * 3600, 0, "pool.ntp.org");
+  configTime(timezoneOffsetHours * 3600, 0, "pool.ntp.org");
   randomSeed(micros());
 
   getWeather();
@@ -31,13 +31,13 @@ void loop()
 {
   handlePortalClient();
 
-  if (millis() - lastWeatherUpdate > 60000)
+  if (millis() - lastWeatherUpdate > weatherUpdateIntervalMs)
   {
     getWeather();
     lastWeatherUpdate = millis();
   }
 
-  if (millis() - lastScreenChange > 8000)
+  if (millis() - lastScreenChange > screenChangeIntervalMs)
   {
     screen++;
     if (screen > 3)

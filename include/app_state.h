@@ -23,6 +23,10 @@ extern float temp;
 extern int screen;
 extern unsigned long lastScreenChange;
 extern unsigned long lastWeatherUpdate;
+extern unsigned long weatherUpdateIntervalMs;
+extern unsigned long screenChangeIntervalMs;
+extern int timezoneOffsetHours;
+extern uint8_t oledBrightness;
 
 extern unsigned long angryUntil;
 extern const unsigned long angryHoldMs;

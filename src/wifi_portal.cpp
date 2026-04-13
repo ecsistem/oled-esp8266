@@ -1,13 +1,18 @@
 #include "wifi_portal.h"
 
 #include <ArduinoJson.h>
+#include <DNSServer.h>
 #include <ESP8266WiFi.h>
 #include <LittleFS.h>
+#include <time.h>
 
 #include "app_state.h"
 
 namespace
 {
+  constexpr byte DNS_PORT = 53;
+  DNSServer dnsServer;
+
   String escapeHtml(const String &value)
   {
     String escaped;
@@ -55,13 +60,21 @@ namespace
 
     wifiSsid = doc["ssid"] | wifiSsid;
     wifiPassword = doc["password"] | wifiPassword;
+    weatherUpdateIntervalMs = doc["weather_interval_ms"] | weatherUpdateIntervalMs;
+    screenChangeIntervalMs = doc["screen_change_ms"] | screenChangeIntervalMs;
+    timezoneOffsetHours = doc["timezone_offset_hours"] | timezoneOffsetHours;
+    oledBrightness = doc["oled_brightness"] | oledBrightness;
   }
 
-  bool saveWiFiConfig(const String &ssidValue, const String &passwordValue)
+  bool saveWiFiConfig()
   {
     JsonDocument doc;
-    doc["ssid"] = ssidValue;
-    doc["password"] = passwordValue;
+    doc["ssid"] = wifiSsid;
+    doc["password"] = wifiPassword;
+    doc["weather_interval_ms"] = weatherUpdateIntervalMs;
+    doc["screen_change_ms"] = screenChangeIntervalMs;
+    doc["timezone_offset_hours"] = timezoneOffsetHours;
+    doc["oled_brightness"] = oledBrightness;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -72,6 +85,43 @@ namespace
     bool ok = serializeJson(doc, file) > 0;
     file.close();
     return ok;
+  }
+
+  unsigned long parseULongBounded(const String &raw, unsigned long minValue, unsigned long maxValue, unsigned long fallback)
+  {
+    if (raw.length() == 0)
+    {
+      return fallback;
+    }
+
+    unsigned long value = strtoul(raw.c_str(), nullptr, 10);
+    if (value < minValue)
+      return minValue;
+    if (value > maxValue)
+      return maxValue;
+    return value;
+  }
+
+  int parseIntBounded(const String &raw, int minValue, int maxValue, int fallback)
+  {
+    if (raw.length() == 0)
+    {
+      return fallback;
+    }
+
+    long value = strtol(raw.c_str(), nullptr, 10);
+    if (value < minValue)
+      return minValue;
+    if (value > maxValue)
+      return maxValue;
+    return static_cast<int>(value);
+  }
+
+  void applyDisplayAndTimeSettings()
+  {
+    display.ssd1306_command(SSD1306_SETCONTRAST);
+    display.ssd1306_command(oledBrightness);
+    configTime(timezoneOffsetHours * 3600, 0, "pool.ntp.org");
   }
 
   void connectStationWiFi()
@@ -117,6 +167,14 @@ namespace
     {
       WiFi.softAP(apSsid.c_str());
     }
+
+    dnsServer.start(DNS_PORT, "*", WiFi.softAPIP());
+  }
+
+  void handleCaptiveRedirect()
+  {
+    server.sendHeader("Location", String("http://") + WiFi.softAPIP().toString() + "/", true);
+    server.send(302, "text/plain", "");
   }
 
   String buildWifiSelectOptions()
@@ -173,6 +231,15 @@ namespace
     page += wifiOptions;
     page += "</select>";
     page += "<input name='password' placeholder='Senha do Wi-Fi' type='password' value='" + escapeHtml(wifiPassword) + "'>";
+    page += "<h3>Ajustes do Sistema</h3>";
+    page += "<label>Intervalo do clima (segundos)</label>";
+    page += "<input name='weather_sec' type='number' min='10' max='3600' value='" + String(weatherUpdateIntervalMs / 1000) + "'>";
+    page += "<label>Fuso horario (UTC, ex: -3)</label>";
+    page += "<input name='tz' type='number' min='-12' max='14' value='" + String(timezoneOffsetHours) + "'>";
+    page += "<label>Brilho OLED (0-255)</label>";
+    page += "<input name='brightness' type='number' min='0' max='255' value='" + String(oledBrightness) + "'>";
+    page += "<label>Troca de tela (segundos)</label>";
+    page += "<input name='screen_sec' type='number' min='2' max='120' value='" + String(screenChangeIntervalMs / 1000) + "'>";
     page += "<button type='submit'>Salvar e conectar</button></form>";
     page += "<form method='get' action='/'><button class='secondary' type='submit'>Atualizar lista de redes</button></form>";
     page += "<form method='get' action='/status'><button class='secondary' type='submit'>Ver status completo</button></form>";
@@ -218,6 +285,10 @@ namespace
     doc["uptime_ms"] = millis();
     doc["temperature_c"] = temp;
     doc["active_screen"] = screen;
+    doc["weather_update_interval_ms"] = weatherUpdateIntervalMs;
+    doc["screen_change_interval_ms"] = screenChangeIntervalMs;
+    doc["timezone_offset_hours"] = timezoneOffsetHours;
+    doc["oled_brightness"] = oledBrightness;
 
     String payload;
     serializeJson(doc, payload);
@@ -228,6 +299,10 @@ namespace
   {
     String newSsid = server.arg("ssid");
     String newPassword = server.arg("password");
+    unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
+    unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
+    int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
+    int newBrightness = parseIntBounded(server.arg("brightness"), 0, 255, oledBrightness);
 
     if (newSsid.length() == 0)
     {
@@ -237,7 +312,13 @@ namespace
 
     wifiSsid = newSsid;
     wifiPassword = newPassword;
-    bool saved = saveWiFiConfig(wifiSsid, wifiPassword);
+    weatherUpdateIntervalMs = weatherSec * 1000;
+    screenChangeIntervalMs = screenSec * 1000;
+    timezoneOffsetHours = newTz;
+    oledBrightness = static_cast<uint8_t>(newBrightness);
+
+    applyDisplayAndTimeSettings();
+    bool saved = saveWiFiConfig();
 
     String page;
     page += "<!doctype html><html><head><meta charset='utf-8'>";
@@ -260,10 +341,16 @@ namespace
   void startConfigPortal()
   {
     server.on("/", HTTP_GET, handleRoot);
+    server.on("/generate_204", HTTP_GET, handleCaptiveRedirect);
+    server.on("/gen_204", HTTP_GET, handleCaptiveRedirect);
+    server.on("/hotspot-detect.html", HTTP_GET, handleCaptiveRedirect);
+    server.on("/ncsi.txt", HTTP_GET, handleCaptiveRedirect);
+    server.on("/connecttest.txt", HTTP_GET, handleCaptiveRedirect);
+    server.on("/fwlink", HTTP_GET, handleCaptiveRedirect);
     server.on("/status", HTTP_GET, handleStatusPage);
     server.on("/api/status", HTTP_GET, handleStatusJson);
     server.on("/save", HTTP_POST, handleSave);
-    server.onNotFound(handleRoot);
+    server.onNotFound(handleCaptiveRedirect);
     server.begin();
   }
 } // namespace
@@ -279,6 +366,7 @@ void initWiFiAndPortal()
 
   startHotspot();
   startConfigPortal();
+  applyDisplayAndTimeSettings();
 
   display.clearDisplay();
   display.setTextSize(1);
@@ -292,4 +380,5 @@ void initWiFiAndPortal()
 void handlePortalClient()
 {
   server.handleClient();
+  dnsServer.processNextRequest();
 }

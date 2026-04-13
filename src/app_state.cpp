@@ -18,6 +18,10 @@ float temp = 0;
 int screen = 0;
 unsigned long lastScreenChange = 0;
 unsigned long lastWeatherUpdate = 0;
+unsigned long weatherUpdateIntervalMs = 60000;
+unsigned long screenChangeIntervalMs = 8000;
+int timezoneOffsetHours = -3;
+uint8_t oledBrightness = 180;
 
 unsigned long angryUntil = 0;
 const unsigned long angryHoldMs = 5000;
