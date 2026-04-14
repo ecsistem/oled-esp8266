@@ -132,8 +132,10 @@ void drawScreen()
     {
       display.println(F("ATAQUE ATIVO"));
       display.setCursor(0, 26);
-      display.print(F("OK drv:"));
-      display.println(deautherPacketsSent);
+      display.print(F("deauth:"));
+      display.print(deautherPacketsSent);
+      display.print(F(" tmp:"));
+      display.println(deautherTmpPacketRate);
       display.setCursor(0, 38);
       display.print(F("Falha:"));
       display.println(deautherInjectFail);

@@ -19,9 +19,11 @@ extern String deautherApMac;
 extern String deautherClientMac;
 extern int deautherChannel;
 extern bool deautherRunning;
-/** Pacotes aceites pelo driver (retorno 0 de wifi_send_pkt_freedom). */
+/** Contador por envio OK dentro de deauthDevice (esp8266_deauther: deauth.packetCounter por frame). */
 extern unsigned long deautherPacketsSent;
-/** Chamadas em que o driver recusou o envio (retorno != 0). */
+/** Acumulado em sendPacket: retorno 0 de wifi_send_pkt_freedom (esp8266_deauther: tmpPacketRate). */
+extern unsigned long deautherTmpPacketRate;
+/** Chamadas em que o driver recusou o envio (retorno != 0) na camada sendPacket do deauth. */
 extern unsigned long deautherInjectFail;
 extern bool beaconActive;
 extern unsigned long beaconPacketsSent;
