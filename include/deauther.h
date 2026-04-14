@@ -11,6 +11,9 @@ void toggleDeauther();
 void startBeaconAttack();
 void stopBeaconAttack();
 void updateBeacon();
+void startProbeAttack();
+void stopProbeAttack();
+void updateProbe();
 
 /** Volta politica de pais WiFi ao padrao (apos injecao). */
 void restoreWifiRegAfterInjection();
@@ -27,3 +30,5 @@ extern unsigned long deautherTmpPacketRate;
 extern unsigned long deautherInjectFail;
 extern bool beaconActive;
 extern unsigned long beaconPacketsSent;
+extern bool probeActive;
+extern unsigned long probePacketsSent;

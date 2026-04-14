@@ -122,6 +122,7 @@ void loop()
   handleFlashButton();
   updateDeauth();
   updateBeacon();
+  updateProbe();
 
   if (!isScreenEnabled(screen))
   {

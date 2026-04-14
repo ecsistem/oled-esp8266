@@ -33,6 +33,13 @@ bool screen5Enabled = true;
 String deautherApMac = "FF:FF:FF:FF:FF:FF";
 String deautherClientMac = "FF:FF:FF:FF:FF:FF";
 int deautherChannel = 1;
+bool deautherDeauthAll = false;
+int deautherDeauthsPerTarget = 25;
+int deautherDeauthReason = 1;
+bool deautherBeaconInterval100ms = true;
+int deautherProbeFramesPerSsid = 1;
+bool probeActive = false;
+unsigned long probePacketsSent = 0;
 
 unsigned long angryUntil = 0;
 const unsigned long angryHoldMs = 5000;
