@@ -32,3 +32,13 @@ extern bool beaconActive;
 extern unsigned long beaconPacketsSent;
 extern bool probeActive;
 extern unsigned long probePacketsSent;
+/** Ultimo segundo completo: beacon.packetCounter (paridade v2). */
+extern unsigned long beaconPacketsPerSecond;
+/** Ultimo segundo completo: probe.packetCounter (paridade v2). */
+extern unsigned long probePacketsPerSecond;
+/** maxPkts calculado para deauth no estado atual. */
+extern unsigned long deauthMaxPacketsPerSecond;
+/** maxPkts calculado para beacon no estado atual. */
+extern unsigned long beaconMaxPacketsPerSecond;
+/** maxPkts calculado para probe no estado atual. */
+extern unsigned long probeMaxPacketsPerSecond;

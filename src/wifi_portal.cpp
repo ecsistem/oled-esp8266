@@ -96,8 +96,6 @@ namespace
     deautherDeauthReason = doc["deauther_deauth_reason"] | deautherDeauthReason;
     deautherBeaconInterval100ms = doc["deauther_beacon_interval_100ms"] | deautherBeaconInterval100ms;
     deautherProbeFramesPerSsid = doc["deauther_probe_frames_per_ssid"] | deautherProbeFramesPerSsid;
-    deautherForceStaInjection = doc["deauther_force_sta_injection"] | deautherForceStaInjection;
-    deautherKeepApDuringAttack = doc["deauther_keep_ap_during_attack"] | deautherKeepApDuringAttack;
   }
 
   bool saveWiFiConfig()
@@ -126,8 +124,6 @@ namespace
     doc["deauther_deauth_reason"] = deautherDeauthReason;
     doc["deauther_beacon_interval_100ms"] = deautherBeaconInterval100ms;
     doc["deauther_probe_frames_per_ssid"] = deautherProbeFramesPerSsid;
-    doc["deauther_force_sta_injection"] = deautherForceStaInjection;
-    doc["deauther_keep_ap_during_attack"] = deautherKeepApDuringAttack;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -649,7 +645,7 @@ namespace
       doc["success"] = true;
       doc["message"] = "Deauth (todos os AP do ultimo scan) iniciado";
       doc["ap_count"] = n;
-      doc["note"] = "SoftAP mantido (WIFI_AP_STA). Pare com /api/deauth/stop ou o botao no ecra.";
+      doc["note"] = "Injecao em WIFI_STA (paridade v2). O AP volta apos parar o ataque.";
       String payload;
       serializeJson(doc, payload);
       server.send(200, "application/json; charset=utf-8", payload);
@@ -682,7 +678,7 @@ namespace
     JsonDocument doc;
     doc["success"] = deautherRunning;
     doc["message"] = deautherRunning ? "Deauth no alvo iniciado" : "Deauth nao iniciado (MAC invalido?)";
-    doc["note"] = "SoftAP mantido durante injecao. Pare com /api/deauth/stop.";
+    doc["note"] = "Injecao em WIFI_STA (paridade v2). O AP volta apos parar.";
     String payload;
     serializeJson(doc, payload);
     server.send(deautherRunning ? 200 : 500, "application/json; charset=utf-8", payload);
@@ -1330,8 +1326,7 @@ namespace
     page += "<label><input name='deauther_beacon_100ms' type='checkbox'" + String(deautherBeaconInterval100ms ? " checked" : "") + "> Beacon interval 100 ms (desmarcado = 1 s)</label>";
     page += "<label>Probe: frames por SSID / segundo (1–20)</label>";
     page += "<input name='deauther_probe_frames' type='number' min='1' max='20' value='" + String(deautherProbeFramesPerSsid) + "'>";
-    page += "<label><input name='deauther_force_sta_injection' type='checkbox'" + String(deautherForceStaInjection ? " checked" : "") + "> Forcar modo STA para injecao (sem esperar fallback)</label>";
-    page += "<label><input name='deauther_keep_ap_during_attack' type='checkbox'" + String(deautherKeepApDuringAttack ? " checked" : "") + "> Manter AP durante ataque (experimental)</label>";
+    page += "<p class='muted'>Modo de injecao alinhado ao v2: durante ataque opera em STA para reduzir recusas do driver freedom.</p>";
     page += "<input type='hidden' name='deauther_ap_mac' value='" + escapeHtml(deautherApMac) + "'>";
     page += "<input type='hidden' name='deauther_client_mac' value='" + escapeHtml(deautherClientMac) + "'>";
     page += "<input type='hidden' name='deauther_channel' value='" + String(deautherChannel) + "'>";
@@ -1341,7 +1336,7 @@ namespace
     // Configuração do Deauther
     page += "<div class='card'>";
     page += "<h3>Deauther Wi-Fi</h3>";
-    page += "<p class='muted'>Busque redes e selecione um alvo, ou use Deauth em todos (ultimo scan). O firmware mantem <strong>SoftAP + STA</strong> durante a injecao (como no v2 com UI).</p>";
+    page += "<p class='muted'>Busque redes e selecione um alvo, ou use Deauth em todos (ultimo scan). Durante injecao o firmware usa <strong>WIFI_STA</strong> (paridade com v2), e restaura o AP ao parar.</p>";
     page += "<p><strong>Status:</strong> " + String(deautherRunning ? "<span class='ok'>ATIVO</span>" : "<span class='bad'>PARADO</span>") + "</p>";
     if (deautherRunning)
     {
@@ -1449,12 +1444,17 @@ namespace
     doc["deauther_deauth_reason"] = deautherDeauthReason;
     doc["deauther_beacon_interval_100ms"] = deautherBeaconInterval100ms;
     doc["deauther_probe_frames_per_ssid"] = deautherProbeFramesPerSsid;
-    doc["deauther_force_sta_injection"] = deautherForceStaInjection;
-    doc["deauther_keep_ap_during_attack"] = deautherKeepApDuringAttack;
     doc["deauther_running"] = deautherRunning;
     doc["deauther_packets_sent"] = deautherPacketsSent;
     doc["deauther_tmp_packet_rate"] = deautherTmpPacketRate;
     doc["deauther_inject_fail"] = deautherInjectFail;
+    doc["deauth_pkts_per_second"] = deautherPacketsSent;
+    doc["beacon_pkts_per_second"] = beaconPacketsPerSecond;
+    doc["probe_pkts_per_second"] = probePacketsPerSecond;
+    doc["deauth_max_pkts_per_second"] = deauthMaxPacketsPerSecond;
+    doc["beacon_max_pkts_per_second"] = beaconMaxPacketsPerSecond;
+    doc["probe_max_pkts_per_second"] = probeMaxPacketsPerSecond;
+    doc["packet_rate"] = deautherTmpPacketRate;
     doc["beacon_active"] = beaconActive;
     doc["beacon_packets_sent"] = beaconPacketsSent;
     doc["probe_active"] = probeActive;
@@ -1490,8 +1490,6 @@ namespace
     bool newDeautherBeacon100ms = server.hasArg("deauther_beacon_100ms");
     int newDeautherProbeFrames =
         parseIntBounded(server.arg("deauther_probe_frames"), 1, 20, deautherProbeFramesPerSsid);
-    bool newDeautherForceStaInjection = server.hasArg("deauther_force_sta_injection");
-    bool newDeautherKeepApDuringAttack = server.hasArg("deauther_keep_ap_during_attack");
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
@@ -1542,8 +1540,6 @@ namespace
     deautherDeauthReason = newDeautherDeauthReason;
     deautherBeaconInterval100ms = newDeautherBeacon100ms;
     deautherProbeFramesPerSsid = newDeautherProbeFrames;
-    deautherForceStaInjection = newDeautherForceStaInjection;
-    deautherKeepApDuringAttack = newDeautherKeepApDuringAttack;
     setCaptivePortalEnabled(newCaptivePortalEnabled);
 
     applyDisplayAndTimeSettings();

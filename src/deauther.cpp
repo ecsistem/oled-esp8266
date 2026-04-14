@@ -24,6 +24,11 @@ unsigned long deautherTmpPacketRate = 0;
 unsigned long deautherInjectFail = 0;
 bool beaconActive = false;
 unsigned long beaconPacketsSent = 0;
+unsigned long beaconPacketsPerSecond = 0;
+unsigned long probePacketsPerSecond = 0;
+unsigned long deauthMaxPacketsPerSecond = 0;
+unsigned long beaconMaxPacketsPerSecond = 0;
+unsigned long probeMaxPacketsPerSecond = 0;
 
 static bool attackActive = false;
 static uint8_t targetApMac[6];
@@ -36,6 +41,8 @@ static unsigned long lastBeaconTickAt = 0;
 static unsigned long s_statsSecondAnchorMs = 0;
 static uint32_t s_deauthPacketCounter = 0;
 static uint32_t s_tmpPacketRateAccum = 0;
+static uint32_t s_beaconPacketCounter = 0;
+static uint32_t s_probePacketCounter = 0;
 
 static bool s_attackDeauthAll = false;
 static uint8_t s_apBssids[kWifiScanMaxNetworks][6];
@@ -47,9 +54,6 @@ static uint8_t s_probeTc = 0;
 static unsigned long s_lastProbeTickAt = 0;
 
 static uint8_t s_wifiChannelCache = 255;
-static bool s_staFallbackActive = false;
-static uint16_t s_consecutiveInjectFails = 0;
-static constexpr uint16_t kStaFallbackFailThreshold = 96;
 
 static void setWifiChannelSh(uint8_t ch, bool force)
 {
@@ -71,23 +75,6 @@ static void applyInjectionCountry()
   wifi_set_country(&c);
 }
 
-static void switchToStaFallbackForInjection(uint8_t channel)
-{
-  wifi_promiscuous_enable(0);
-  WiFi.mode(WIFI_STA);
-  delay(80);
-  applyInjectionCountry();
-  s_wifiChannelCache = 255;
-  if (channel >= 1 && channel <= 14)
-  {
-    wifi_set_channel(channel);
-    s_wifiChannelCache = channel;
-  }
-  wifi_promiscuous_enable(1);
-  s_staFallbackActive = true;
-  Serial.println(F("[deauther] fallback RF: WIFI_STA para liberar injetor"));
-}
-
 void restoreWifiRegAfterInjection()
 {
   wifi_country_t c;
@@ -98,6 +85,10 @@ void restoreWifiRegAfterInjection()
   c.policy = WIFI_COUNTRY_POLICY_AUTO;
   wifi_set_country(&c);
 }
+
+static unsigned deauthMaxPktsNow();
+static unsigned beaconMaxPktsNow();
+static unsigned probeMaxPktsNow();
 
 static void rollAttackStatsIfNeeded()
 {
@@ -115,8 +106,15 @@ static void rollAttackStatsIfNeeded()
   {
     deautherPacketsSent = s_deauthPacketCounter;
     deautherTmpPacketRate = s_tmpPacketRateAccum;
+    beaconPacketsPerSecond = s_beaconPacketCounter;
+    probePacketsPerSecond = s_probePacketCounter;
+    deauthMaxPacketsPerSecond = deauthMaxPktsNow();
+    beaconMaxPacketsPerSecond = beaconMaxPktsNow();
+    probeMaxPacketsPerSecond = probeMaxPktsNow();
     s_deauthPacketCounter = 0;
     s_tmpPacketRateAccum = 0;
+    s_beaconPacketCounter = 0;
+    s_probePacketCounter = 0;
     s_statsSecondAnchorMs += 1000UL;
   }
 }
@@ -129,27 +127,10 @@ static bool sendPacketSpacehuhn(uint8_t *packet, uint16_t packetSize, uint8_t ch
   if (sent)
   {
     s_tmpPacketRateAccum++;
-    s_consecutiveInjectFails = 0;
   }
   else
   {
     deautherInjectFail++;
-    if (s_consecutiveInjectFails < 0xFFFF)
-    {
-      s_consecutiveInjectFails++;
-    }
-    if (!s_staFallbackActive && s_consecutiveInjectFails >= kStaFallbackFailThreshold)
-    {
-      switchToStaFallbackForInjection(ch);
-      const bool retrySent = (wifi_send_pkt_freedom(packet, packetSize, 0) == 0);
-      if (retrySent)
-      {
-        s_tmpPacketRateAccum++;
-        s_consecutiveInjectFails = 0;
-        return true;
-      }
-      deautherInjectFail++;
-    }
   }
   return sent;
 }
@@ -375,16 +356,14 @@ static void prepareRadioForDeauthInjection(uint8_t channel)
   WiFi.setAutoReconnect(false);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-  const bool useStaOnly = deautherForceStaInjection || !deautherKeepApDuringAttack;
-  WiFi.mode(useStaOnly ? WIFI_STA : WIFI_AP_STA);
+  // Paridade com v2: durante injecao opera em STA.
+  WiFi.mode(WIFI_STA);
   delay(50);
 
   wifi_set_phy_mode(PHY_MODE_11N);
   system_phy_set_max_tpw(82);
 
   applyInjectionCountry();
-  s_staFallbackActive = useStaOnly;
-  s_consecutiveInjectFails = 0;
 
   s_wifiChannelCache = 255;
   if (channel >= 1 && channel <= 14)
@@ -430,8 +409,15 @@ void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint
   deautherPacketsSent = 0;
   deautherTmpPacketRate = 0;
   deautherInjectFail = 0;
+  beaconPacketsPerSecond = 0;
+  probePacketsPerSecond = 0;
+  deauthMaxPacketsPerSecond = 0;
+  beaconMaxPacketsPerSecond = 0;
+  probeMaxPacketsPerSecond = 0;
   s_deauthPacketCounter = 0;
   s_tmpPacketRateAccum = 0;
+  s_beaconPacketCounter = 0;
+  s_probePacketCounter = 0;
   s_statsSecondAnchorMs = millis();
   s_deauthTc = 0;
   attackReason = static_cast<uint8_t>(deautherDeauthReason & 0xFF);
@@ -586,6 +572,7 @@ void updateBeacon()
   if (sendBeaconSpacehuhn(s_beaconTc))
   {
     beaconPacketsSent++;
+    s_beaconPacketCounter++;
   }
   s_beaconTc++;
   if (s_beaconTc >= kBeaconRosterCount)
@@ -618,6 +605,7 @@ void updateProbe()
   if (sendProbeSpacehuhn(mac, kBeaconRoster[idx].ssid, ch))
   {
     probePacketsSent++;
+    s_probePacketCounter++;
   }
   s_probeTc++;
   s_lastProbeTickAt = now;
