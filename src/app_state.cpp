@@ -38,6 +38,8 @@ int deautherDeauthsPerTarget = 25;
 int deautherDeauthReason = 1;
 bool deautherBeaconInterval100ms = true;
 int deautherProbeFramesPerSsid = 1;
+bool deautherForceStaInjection = false;
+bool deautherKeepApDuringAttack = true;
 bool probeActive = false;
 unsigned long probePacketsSent = 0;
 

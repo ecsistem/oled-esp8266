@@ -96,6 +96,8 @@ namespace
     deautherDeauthReason = doc["deauther_deauth_reason"] | deautherDeauthReason;
     deautherBeaconInterval100ms = doc["deauther_beacon_interval_100ms"] | deautherBeaconInterval100ms;
     deautherProbeFramesPerSsid = doc["deauther_probe_frames_per_ssid"] | deautherProbeFramesPerSsid;
+    deautherForceStaInjection = doc["deauther_force_sta_injection"] | deautherForceStaInjection;
+    deautherKeepApDuringAttack = doc["deauther_keep_ap_during_attack"] | deautherKeepApDuringAttack;
   }
 
   bool saveWiFiConfig()
@@ -124,6 +126,8 @@ namespace
     doc["deauther_deauth_reason"] = deautherDeauthReason;
     doc["deauther_beacon_interval_100ms"] = deautherBeaconInterval100ms;
     doc["deauther_probe_frames_per_ssid"] = deautherProbeFramesPerSsid;
+    doc["deauther_force_sta_injection"] = deautherForceStaInjection;
+    doc["deauther_keep_ap_during_attack"] = deautherKeepApDuringAttack;
 
     File file = LittleFS.open(wifiConfigPath, "w");
     if (!file)
@@ -1326,6 +1330,8 @@ namespace
     page += "<label><input name='deauther_beacon_100ms' type='checkbox'" + String(deautherBeaconInterval100ms ? " checked" : "") + "> Beacon interval 100 ms (desmarcado = 1 s)</label>";
     page += "<label>Probe: frames por SSID / segundo (1–20)</label>";
     page += "<input name='deauther_probe_frames' type='number' min='1' max='20' value='" + String(deautherProbeFramesPerSsid) + "'>";
+    page += "<label><input name='deauther_force_sta_injection' type='checkbox'" + String(deautherForceStaInjection ? " checked" : "") + "> Forcar modo STA para injecao (sem esperar fallback)</label>";
+    page += "<label><input name='deauther_keep_ap_during_attack' type='checkbox'" + String(deautherKeepApDuringAttack ? " checked" : "") + "> Manter AP durante ataque (experimental)</label>";
     page += "<input type='hidden' name='deauther_ap_mac' value='" + escapeHtml(deautherApMac) + "'>";
     page += "<input type='hidden' name='deauther_client_mac' value='" + escapeHtml(deautherClientMac) + "'>";
     page += "<input type='hidden' name='deauther_channel' value='" + String(deautherChannel) + "'>";
@@ -1443,6 +1449,8 @@ namespace
     doc["deauther_deauth_reason"] = deautherDeauthReason;
     doc["deauther_beacon_interval_100ms"] = deautherBeaconInterval100ms;
     doc["deauther_probe_frames_per_ssid"] = deautherProbeFramesPerSsid;
+    doc["deauther_force_sta_injection"] = deautherForceStaInjection;
+    doc["deauther_keep_ap_during_attack"] = deautherKeepApDuringAttack;
     doc["deauther_running"] = deautherRunning;
     doc["deauther_packets_sent"] = deautherPacketsSent;
     doc["deauther_tmp_packet_rate"] = deautherTmpPacketRate;
@@ -1482,6 +1490,8 @@ namespace
     bool newDeautherBeacon100ms = server.hasArg("deauther_beacon_100ms");
     int newDeautherProbeFrames =
         parseIntBounded(server.arg("deauther_probe_frames"), 1, 20, deautherProbeFramesPerSsid);
+    bool newDeautherForceStaInjection = server.hasArg("deauther_force_sta_injection");
+    bool newDeautherKeepApDuringAttack = server.hasArg("deauther_keep_ap_during_attack");
     unsigned long weatherSec = parseULongBounded(server.arg("weather_sec"), 10, 3600, weatherUpdateIntervalMs / 1000);
     unsigned long screenSec = parseULongBounded(server.arg("screen_sec"), 2, 120, screenChangeIntervalMs / 1000);
     int newTz = parseIntBounded(server.arg("tz"), -12, 14, timezoneOffsetHours);
@@ -1532,6 +1542,8 @@ namespace
     deautherDeauthReason = newDeautherDeauthReason;
     deautherBeaconInterval100ms = newDeautherBeacon100ms;
     deautherProbeFramesPerSsid = newDeautherProbeFrames;
+    deautherForceStaInjection = newDeautherForceStaInjection;
+    deautherKeepApDuringAttack = newDeautherKeepApDuringAttack;
     setCaptivePortalEnabled(newCaptivePortalEnabled);
 
     applyDisplayAndTimeSettings();

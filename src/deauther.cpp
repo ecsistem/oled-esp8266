@@ -375,14 +375,15 @@ static void prepareRadioForDeauthInjection(uint8_t channel)
   WiFi.setAutoReconnect(false);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-  WiFi.mode(WIFI_AP_STA);
+  const bool useStaOnly = deautherForceStaInjection || !deautherKeepApDuringAttack;
+  WiFi.mode(useStaOnly ? WIFI_STA : WIFI_AP_STA);
   delay(50);
 
   wifi_set_phy_mode(PHY_MODE_11N);
   system_phy_set_max_tpw(82);
 
   applyInjectionCountry();
-  s_staFallbackActive = false;
+  s_staFallbackActive = useStaOnly;
   s_consecutiveInjectFails = 0;
 
   s_wifiChannelCache = 255;

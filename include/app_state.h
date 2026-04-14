@@ -47,6 +47,10 @@ extern int deautherDeauthReason;
 /** INTERVAL_100MS vs INTERVAL_1S no beacon v2. */
 extern bool deautherBeaconInterval100ms;
 extern int deautherProbeFramesPerSsid;
+/** Forca injecao em WIFI_STA desde o inicio (sem esperar fallback). */
+extern bool deautherForceStaInjection;
+/** Mantem AP durante ataque (experimental). */
+extern bool deautherKeepApDuringAttack;
 extern bool probeActive;
 extern unsigned long probePacketsSent;
 extern const unsigned long angryHoldMs;
