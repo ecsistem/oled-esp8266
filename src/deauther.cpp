@@ -16,6 +16,7 @@
 extern "C"
 {
 #include "user_interface.h"
+int8_t free80211_send(uint8_t *buffer, uint16_t len) __attribute__((weak));
 }
 
 bool deautherRunning = false;
@@ -62,17 +63,6 @@ static void setWifiChannelSh(uint8_t ch, bool force)
     s_wifiChannelCache = ch;
     wifi_set_channel(ch);
   }
-}
-
-static void applyInjectionCountry()
-{
-  wifi_country_t c;
-  memset(&c, 0, sizeof(c));
-  strncpy(c.cc, "01", 3);
-  c.schan = 1;
-  c.nchan = 14;
-  c.policy = WIFI_COUNTRY_POLICY_MANUAL;
-  wifi_set_country(&c);
 }
 
 void restoreWifiRegAfterInjection()
@@ -123,7 +113,18 @@ static bool sendPacketSpacehuhn(uint8_t *packet, uint16_t packetSize, uint8_t ch
 {
   setWifiChannelSh(ch, force_ch);
   yield();
-  const bool sent = (wifi_send_pkt_freedom(packet, packetSize, 0) == 0);
+  // Backend principal: free80211_send (quando disponivel no core/SDK).
+  bool sent = false;
+  if (free80211_send)
+  {
+    int8_t rc = free80211_send(packet, packetSize);
+    sent = (rc >= 0);
+  }
+  if (!sent)
+  {
+    // Fallback para o caminho freedom tradicional.
+    sent = (wifi_send_pkt_freedom(packet, packetSize, 0) == 0);
+  }
   if (sent)
   {
     s_tmpPacketRateAccum++;
@@ -351,19 +352,10 @@ static bool deauthDeviceSpacehuhn(uint8_t *apMac, const uint8_t *stMac, uint8_t 
 
 static void prepareRadioForDeauthInjection(uint8_t channel)
 {
+  // Fluxo enxuto no estilo v2: STA + troca de canal.
   wifi_promiscuous_enable(0);
-  WiFi.persistent(false);
-  WiFi.setAutoReconnect(false);
-  WiFi.setSleepMode(WIFI_NONE_SLEEP);
-
-  // Paridade com v2: durante injecao opera em STA.
   WiFi.mode(WIFI_STA);
-  delay(50);
-
-  wifi_set_phy_mode(PHY_MODE_11N);
-  system_phy_set_max_tpw(82);
-
-  applyInjectionCountry();
+  delay(1);
 
   s_wifiChannelCache = 255;
   if (channel >= 1 && channel <= 14)
@@ -371,7 +363,8 @@ static void prepareRadioForDeauthInjection(uint8_t channel)
     wifi_set_channel(channel);
     s_wifiChannelCache = channel;
   }
-  delay(50);
+  wifi_promiscuous_enable(1);
+  delay(1);
 }
 
 void initDeauther()

@@ -7,6 +7,21 @@
 #include "eye_animation.h"
 #include "deauther.h"
 
+static bool readLocalTimeCompat(struct tm *out)
+{
+#if defined(ARDUINO_ESP8266_MAJOR) && (ARDUINO_ESP8266_MAJOR >= 3)
+  return getLocalTime(out);
+#else
+  time_t now = time(nullptr);
+  if (now <= 1000)
+  {
+    return false;
+  }
+  localtime_r(&now, out);
+  return true;
+#endif
+}
+
 void drawScreen()
 {
   display.clearDisplay();
@@ -58,7 +73,7 @@ void drawScreen()
   {
     struct tm timeinfo;
 
-    if (getLocalTime(&timeinfo))
+    if (readLocalTimeCompat(&timeinfo))
     {
       char timeText[6];
       char secondText[3];
