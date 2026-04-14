@@ -1187,8 +1187,8 @@ namespace
     page += "<p><strong>Status:</strong> " + String(deautherRunning ? "<span class='ok'>ATIVO</span>" : "<span class='bad'>PARADO</span>") + "</p>";
     if (deautherRunning)
     {
-      page += "<p><strong>Frames deauth (deauthDevice):</strong> " + String(deautherPacketsSent) + "</p>";
-      page += "<p><strong>sendPacket OK (tmpPacketRate):</strong> " + String(deautherTmpPacketRate) + "</p>";
+      page += "<p><strong>Deauth/s (ultimo segundo, deauthPkts):</strong> " + String(deautherPacketsSent) + "</p>";
+      page += "<p><strong>Pacotes/s (ultimo segundo, packetRate):</strong> " + String(deautherTmpPacketRate) + "</p>";
       page += "<p><strong>Recusadas pelo driver:</strong> " + String(deautherInjectFail) + " <span class='muted'>(fila cheia = aumente pausa no codigo)</span></p>";
     }
     page += "<button onclick='loadNetworks()'>Buscar Redes Wi-Fi</button>";

