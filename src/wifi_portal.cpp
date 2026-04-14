@@ -614,6 +614,28 @@ namespace
     return countScanApsWithBssid();
   }
 
+  bool isValidMacText(const String &mac)
+  {
+    String s = mac;
+    s.trim();
+    s.replace(":", "");
+    s.replace("-", "");
+    if (s.length() != 12)
+    {
+      return false;
+    }
+    for (size_t i = 0; i < s.length(); i++)
+    {
+      const char c = s[i];
+      const bool hex = (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
+      if (!hex)
+      {
+        return false;
+      }
+    }
+    return true;
+  }
+
   void handleApiDeauthStart()
   {
     const String allRaw = server.arg("deauth_all");
@@ -637,8 +659,14 @@ namespace
       startDeauthAttack(nullptr, nullptr, 1, 0);
       if (!deautherRunning)
       {
-        server.send(500, "application/json; charset=utf-8",
-                     "{\"error\":\"Falha ao iniciar deauth em todos os AP (verifique o scan).\"}");
+        JsonDocument err;
+        err["error"] = "Falha ao iniciar deauth_all";
+        err["reason"] = "start_failed";
+        err["scan_ap_count"] = n;
+        err["hint"] = "Verifique se o driver de injecao aceita raw TX (packet_rate deve subir).";
+        String payload;
+        serializeJson(err, payload);
+        server.send(500, "application/json; charset=utf-8", payload);
         return;
       }
       JsonDocument doc;
@@ -657,11 +685,38 @@ namespace
 
     String apMac = server.arg("ap_mac");
     String clientMac = server.arg("client_mac");
-    int channel = parseIntBounded(server.arg("channel"), 1, 14, 1);
+    const String channelRaw = server.arg("channel");
+    const long channelParsed = strtol(channelRaw.c_str(), nullptr, 10);
+    int channel = parseIntBounded(channelRaw, 1, 14, 1);
 
     if (apMac.length() == 0 || clientMac.length() == 0)
     {
       server.send(400, "application/json; charset=utf-8", "{\"error\":\"ap_mac e client_mac obrigatorios (ou deauth_all=1)\"}");
+      return;
+    }
+    if (!isValidMacText(apMac) || !isValidMacText(clientMac))
+    {
+      JsonDocument err;
+      err["error"] = "MAC invalido";
+      err["reason"] = "invalid_mac";
+      err["ap_mac"] = apMac;
+      err["client_mac"] = clientMac;
+      err["hint"] = "Use formato aa:bb:cc:dd:ee:ff";
+      String payload;
+      serializeJson(err, payload);
+      server.send(400, "application/json; charset=utf-8", payload);
+      return;
+    }
+    if (channelRaw.length() == 0 || channelParsed < 1 || channelParsed > 14)
+    {
+      JsonDocument err;
+      err["error"] = "Canal invalido";
+      err["reason"] = "invalid_channel";
+      err["channel"] = channelRaw;
+      err["hint"] = "Informe channel entre 1 e 14";
+      String payload;
+      serializeJson(err, payload);
+      server.send(400, "application/json; charset=utf-8", payload);
       return;
     }
 
@@ -675,13 +730,28 @@ namespace
     }
     toggleDeauther();
 
-    JsonDocument doc;
-    doc["success"] = deautherRunning;
-    doc["message"] = deautherRunning ? "Deauth no alvo iniciado" : "Deauth nao iniciado (MAC invalido?)";
-    doc["note"] = "Injecao em WIFI_STA (paridade v2). O AP volta apos parar.";
+    if (!deautherRunning)
+    {
+      JsonDocument err;
+      err["error"] = "Falha ao iniciar deauth no alvo";
+      err["reason"] = "start_failed";
+      err["ap_mac"] = apMac;
+      err["client_mac"] = clientMac;
+      err["channel"] = channel;
+      err["hint"] = "Se packet_rate ficar 0 e inject_fail subir, o driver esta recusando raw TX.";
+      String payload;
+      serializeJson(err, payload);
+      server.send(500, "application/json; charset=utf-8", payload);
+      return;
+    }
+
+    JsonDocument ok;
+    ok["success"] = true;
+    ok["message"] = "Deauth no alvo iniciado";
+    ok["note"] = "Injecao em WIFI_STA (paridade v2). O AP volta apos parar.";
     String payload;
-    serializeJson(doc, payload);
-    server.send(deautherRunning ? 200 : 500, "application/json; charset=utf-8", payload);
+    serializeJson(ok, payload);
+    server.send(200, "application/json; charset=utf-8", payload);
   }
 
   void handleApiDeauthStop()
