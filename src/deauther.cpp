@@ -47,6 +47,9 @@ static uint8_t s_probeTc = 0;
 static unsigned long s_lastProbeTickAt = 0;
 
 static uint8_t s_wifiChannelCache = 255;
+static bool s_staFallbackActive = false;
+static uint16_t s_consecutiveInjectFails = 0;
+static constexpr uint16_t kStaFallbackFailThreshold = 96;
 
 static void setWifiChannelSh(uint8_t ch, bool force)
 {
@@ -66,6 +69,23 @@ static void applyInjectionCountry()
   c.nchan = 14;
   c.policy = WIFI_COUNTRY_POLICY_MANUAL;
   wifi_set_country(&c);
+}
+
+static void switchToStaFallbackForInjection(uint8_t channel)
+{
+  wifi_promiscuous_enable(0);
+  WiFi.mode(WIFI_STA);
+  delay(80);
+  applyInjectionCountry();
+  s_wifiChannelCache = 255;
+  if (channel >= 1 && channel <= 14)
+  {
+    wifi_set_channel(channel);
+    s_wifiChannelCache = channel;
+  }
+  wifi_promiscuous_enable(1);
+  s_staFallbackActive = true;
+  Serial.println(F("[deauther] fallback RF: WIFI_STA para liberar injetor"));
 }
 
 void restoreWifiRegAfterInjection()
@@ -109,10 +129,27 @@ static bool sendPacketSpacehuhn(uint8_t *packet, uint16_t packetSize, uint8_t ch
   if (sent)
   {
     s_tmpPacketRateAccum++;
+    s_consecutiveInjectFails = 0;
   }
   else
   {
     deautherInjectFail++;
+    if (s_consecutiveInjectFails < 0xFFFF)
+    {
+      s_consecutiveInjectFails++;
+    }
+    if (!s_staFallbackActive && s_consecutiveInjectFails >= kStaFallbackFailThreshold)
+    {
+      switchToStaFallbackForInjection(ch);
+      const bool retrySent = (wifi_send_pkt_freedom(packet, packetSize, 0) == 0);
+      if (retrySent)
+      {
+        s_tmpPacketRateAccum++;
+        s_consecutiveInjectFails = 0;
+        return true;
+      }
+      deautherInjectFail++;
+    }
   }
   return sent;
 }
@@ -345,6 +382,8 @@ static void prepareRadioForDeauthInjection(uint8_t channel)
   system_phy_set_max_tpw(82);
 
   applyInjectionCountry();
+  s_staFallbackActive = false;
+  s_consecutiveInjectFails = 0;
 
   s_wifiChannelCache = 255;
   if (channel >= 1 && channel <= 14)

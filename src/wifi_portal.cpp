@@ -596,6 +596,24 @@ namespace
     return n;
   }
 
+  int refreshAndCountScanApsWithBssid()
+  {
+    int n = countScanApsWithBssid();
+    if (n > 0)
+    {
+      return n;
+    }
+
+    // Fallback: tenta um scan sincrono para preencher o cache usado pelo deauth_all.
+    const int raw = WiFi.scanNetworks(false, true);
+    if (raw >= 0)
+    {
+      wifiScanStoreDriverResults(raw);
+      WiFi.scanDelete();
+    }
+    return countScanApsWithBssid();
+  }
+
   void handleApiDeauthStart()
   {
     const String allRaw = server.arg("deauth_all");
@@ -603,16 +621,20 @@ namespace
 
     if (wantAll)
     {
-      const int n = countScanApsWithBssid();
+      const int n = refreshAndCountScanApsWithBssid();
       if (n <= 0)
       {
         server.send(400, "application/json; charset=utf-8",
-                     "{\"error\":\"Nenhum AP com BSSID no ultimo scan. Escaneie no ecra 5 ou use GET /api/scan e repita.\"}");
+                     "{\"error\":\"Nenhum AP com BSSID disponivel. Escaneie e tente novamente.\"}");
         return;
+      }
+      if (deautherRunning)
+      {
+        stopDeauthAttack();
       }
       deautherDeauthAll = true;
       saveWiFiConfig();
-      toggleDeauther();
+      startDeauthAttack(nullptr, nullptr, 1, 0);
       if (!deautherRunning)
       {
         server.send(500, "application/json; charset=utf-8",
@@ -647,21 +669,27 @@ namespace
     deautherClientMac = clientMac;
     deautherChannel = channel;
     saveWiFiConfig();
-
+    if (deautherRunning)
+    {
+      stopDeauthAttack();
+    }
     toggleDeauther();
 
     JsonDocument doc;
-    doc["success"] = true;
+    doc["success"] = deautherRunning;
     doc["message"] = deautherRunning ? "Deauth no alvo iniciado" : "Deauth nao iniciado (MAC invalido?)";
     doc["note"] = "SoftAP mantido durante injecao. Pare com /api/deauth/stop.";
     String payload;
     serializeJson(doc, payload);
-    server.send(200, "application/json; charset=utf-8", payload);
+    server.send(deautherRunning ? 200 : 500, "application/json; charset=utf-8", payload);
   }
 
   void handleApiDeauthStop()
   {
-    toggleDeauther();
+    if (deautherRunning)
+    {
+      stopDeauthAttack();
+    }
 
     JsonDocument doc;
     doc["success"] = true;
